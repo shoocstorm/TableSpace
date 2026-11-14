@@ -1,13 +1,15 @@
-// The full-screen 3D view: a dark space with a floor grid, the active
-// schema's tables and relationships, and whatever the agent has added.
+// The full-screen 3D view: the chosen environment (sky, fog, floor grid),
+// the active schema's tables and relationships, and whatever the agent has added.
 
-import { Grid, Stars } from '@react-three/drei';
 import { Canvas } from '@react-three/fiber';
-import { Bloom, EffectComposer } from '@react-three/postprocessing';
+import { Bloom, EffectComposer, Vignette } from '@react-three/postprocessing';
 import { useEffect, useMemo } from 'react';
 import { litTables, positionsOf, selectTable, toggleExpanded, useScene } from '../state/scene';
+import { useUi } from '../state/ui';
 import { usePhone, useReducedMotion } from '../ui/usePhone';
+import { Backdrop } from './Backdrop';
 import { CameraRig } from './CameraRig';
+import { environmentById } from './environments';
 import { Ghosts } from './Ghosts';
 import { resetLive } from './live';
 import { QueryPulses } from './QueryPulses';
@@ -29,6 +31,7 @@ function Scene({ phone, still }: { phone: boolean; still: boolean }) {
   const traceStep = useScene((s) => s.traceStep);
   const xray = useScene((s) => s.xray);
   const focus = useScene((s) => s.focus);
+  const env = environmentById(useUi((s) => s.env));
 
   const lit = useMemo(() => litTables({ xray, focus, selected, schema }), [xray, focus, selected, schema]);
   const litSet = useMemo(() => (lit ? new Set(lit) : null), [lit]);
@@ -53,14 +56,7 @@ function Scene({ phone, still }: { phone: boolean; still: boolean }) {
 
   return (
     <>
-      <color attach="background" args={['#060a12']} />
-      <fog attach="fog" args={['#060a12', 95, 280]} />
-      <ambientLight intensity={0.7} />
-      <directionalLight position={[20, 40, 30]} intensity={1.1} />
-      <pointLight position={[-30, 12, -20]} intensity={600} color="#38bdf8" />
-      <pointLight position={[30, 8, 24]} intensity={500} color="#a78bfa" />
-      {!phone && <Stars radius={160} depth={60} count={1400} factor={3.2} saturation={0} fade speed={still ? 0 : 0.4} />}
-      <Grid position={[0, floor, 0]} infiniteGrid cellSize={2} sectionSize={10} cellThickness={0.6} sectionThickness={1.1} cellColor="#12233d" sectionColor="#1d4268" fadeDistance={phone ? 110 : 170} fadeStrength={1.6} />
+      <Backdrop env={env} floor={floor} phone={phone} still={still} />
 
       {schema.tables.map((t) => (
         <TableMonolith
@@ -68,6 +64,7 @@ function Scene({ phone, still }: { phone: boolean; still: boolean }) {
           table={t}
           color={colors.get(t.domain) ?? '#94a3b8'}
           position={layout[t.name]}
+          floor={floor}
           rows={rows[t.name] ?? t.rows}
           expanded={!!expanded[t.name]}
           selected={selected === t.name}
@@ -77,13 +74,14 @@ function Scene({ phone, still }: { phone: boolean; still: boolean }) {
           onSelect={onSelect}
         />
       ))}
-      <Relationships key={schema.id} schema={schema} edges={edges} lit={lit} light={phone} still={still} />
+      <Relationships key={schema.id} schema={schema} edges={edges} lit={lit} selected={selected} light={phone} still={still} />
       {trace && <QueryPulses key={trace.sql} steps={trace.steps} edges={edges} still={still} />}
       <Ghosts ghosts={ghosts} layout={layout} />
       <WarningBadges badges={badges} />
       <CameraRig still={still} />
       <EffectComposer multisampling={phone ? 0 : 4} enabled>
-        <Bloom mipmapBlur luminanceThreshold={1} luminanceSmoothing={0.2} intensity={phone ? 0.55 : 0.9} radius={0.7} />
+        <Bloom mipmapBlur luminanceThreshold={1} luminanceSmoothing={0.2} intensity={(phone ? 0.55 : 0.9) * env.bloom} radius={0.7} />
+        <Vignette offset={0.28} darkness={0.62} />
       </EffectComposer>
     </>
   );

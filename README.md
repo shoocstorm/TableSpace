@@ -41,6 +41,12 @@ Small local models can't be trusted to write tool calls free-form, so they don't
 
 A keyword router backs this up: when the model says `answer` to a request that plainly matches a tool, or a step fails, the match is used. Each answer shows who chose the tool (*chosen by the model*, *keyword match*, or *prompt chip*).
 
+## Reading the scene
+
+- **Tables** are glass slabs in their domain's color. Each has a name tag that faces the camera (it gives way to the table's face up close), a pool of light on the floor under it and a thread down to the floor, which show where it sits in depth.
+- **Relationships** are drawn from the column that holds the key to the table it references: a dot on the key column, an **arrowhead** on the referenced table. Each line has a label — the cardinality read along the arrow (`N:1`, `1:1`, `M:N`), or the whole reference (`orders.user_id → users.id  N:1`) for the lines of the selected table or of whatever is in focus, which are also drawn heavier. The particles still flow from the "one" side to the "many".
+- **World** in the dock chooses the environment: Deep Space, Nebula, Synthwave, Blueprint, Ocean Abyss or Terminal. The choice is remembered in this browser. An environment is one entry in `src/scene/environments.ts` (sky gradient, fog, grid, lights, and optional stars, gas clouds, sun and drifting motes); adding an entry adds it to the picker.
+
 ## Writing SQL
 
 Ask a question about the data (*how many orders does each user have? top 10*, *list cancelled orders with total over 10000*) and `write_sql` answers with a query, a sentence saying what it understood, a list of what was checked, and a trace of the query in the scene.

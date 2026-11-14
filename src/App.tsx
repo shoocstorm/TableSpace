@@ -71,6 +71,15 @@ function Legend() {
           <span className="font-mono text-[11px] text-slate-500">{tablesOfDomain(schema, d.id).length}</span>
         </button>
       ))}
+      <span className="label mb-1 mt-2 pl-1.5">Relationships</span>
+      <span className="flex items-center gap-2 pl-1.5 text-[12px] text-slate-400">
+        <svg width="46" height="10" viewBox="0 0 46 10" aria-hidden>
+          <circle cx="4" cy="5" r="3" fill="#94a3b8" />
+          <path d="M7 5 H36" stroke="#94a3b8" strokeWidth="1.6" />
+          <path d="M35 1 L45 5 L35 9 Z" fill="#e2e8f0" />
+        </svg>
+        key column → table it references
+      </span>
     </div>
   );
 }

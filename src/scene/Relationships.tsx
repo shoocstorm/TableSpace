@@ -1,19 +1,26 @@
 // Foreign keys as curves from the key column's row on the child table to the
-// referenced table, with particles flowing along them. The flow shows the
-// cardinality: one particle going back and forth for 1:1, a stream from the
-// one side to the many for 1:N, streams both ways for M:N.
+// referenced table. Each line starts at a dot on the column that holds the
+// key and ends in an arrowhead on the table it points at, and carries a
+// label: the cardinality, or the whole reference ("orders.user_id →
+// users.id") once the line belongs to the selected or focused tables.
+// Particles flow along it to show the cardinality: one going back and forth
+// for 1:1, a stream from the one side to the many for 1:N, both ways for M:N.
 
 import { Billboard, Line } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import { useEffect, useMemo, useRef } from 'react';
-import { CanvasTexture, Color, CubicBezierCurve3, LinearFilter, Object3D, SRGBColorSpace, Vector3, type Group, type InstancedMesh } from 'three';
+import { CanvasTexture, Color, CubicBezierCurve3, LinearFilter, MathUtils, Object3D, SRGBColorSpace, Vector3, type Group, type InstancedMesh, type Mesh, type MeshBasicMaterial } from 'three';
 import type { Line2 } from 'three-stdlib';
 import type { Edge } from '../schema/graph';
 import type { Cardinality, SchemaDef } from '../schema/types';
 import { CARD_W, columnY, drawPill } from './card';
 import { isMoving, live } from './live';
+import { useFonts } from './useCanvasTexture';
 
-const SEGMENTS = 28;
+const SEGMENTS = 32;
+/** The arrowhead's length; the line stops at its base. */
+const ARROW = 0.62;
+const UP = new Vector3(0, 1, 0);
 const tmp = { a: new Vector3(), b: new Vector3() };
 
 /** Rebuilds an edge's curve from where its two tables are right now. False until both exist. */
@@ -45,7 +52,7 @@ function updateCurve(curve: CubicBezierCurve3, edge: Edge, schema: SchemaDef): b
   return true;
 }
 
-function RelationshipLine({ edge, schema, colorFrom, colorTo, lit }: { edge: Edge; schema: SchemaDef; colorFrom: string; colorTo: string; lit: boolean }) {
+function RelationshipLine({ edge, schema, colorFrom, colorTo, lit, strong }: { edge: Edge; schema: SchemaDef; colorFrom: string; colorTo: string; lit: boolean; strong: boolean }) {
   const line = useRef<Line2>(null);
   const curve = useMemo(() => new CubicBezierCurve3(new Vector3(), new Vector3(), new Vector3(), new Vector3(1, 0, 0)), []);
   const flat = useMemo(() => new Float32Array((SEGMENTS + 1) * 3), []);
@@ -68,8 +75,9 @@ function RelationshipLine({ edge, schema, colorFrom, colorTo, lit }: { edge: Edg
     if (!built.current || isMoving()) {
       if (updateCurve(curve, edge, schema)) {
         const p = tmp.a;
+        const stop = 1 - Math.min(0.2, (ARROW * 0.9) / Math.max(1, curve.v0.distanceTo(curve.v3)));
         for (let i = 0; i <= SEGMENTS; i++) {
-          curve.getPoint(i / SEGMENTS, p);
+          curve.getPoint((i / SEGMENTS) * stop, p);
           flat[i * 3] = p.x;
           flat[i * 3 + 1] = p.y;
           flat[i * 3 + 2] = p.z;
@@ -79,12 +87,13 @@ function RelationshipLine({ edge, schema, colorFrom, colorTo, lit }: { edge: Edg
       }
     }
     l.visible = built.current;
-    const want = lit ? 0.78 : 0.04;
-    l.material.opacity += (want - l.material.opacity) * (1 - Math.exp(-dt * 6));
+    const k = 1 - Math.exp(-dt * 6);
+    l.material.opacity += ((lit ? (strong ? 1 : 0.72) : 0.04) - l.material.opacity) * k;
+    l.material.linewidth += ((strong ? 3.4 : 1.9) - l.material.linewidth) * k;
   });
 
   // no `visible` prop here: drei spreads the rest of the props onto the material too, which would hide it for good
-  return <Line ref={line} points={initial} vertexColors={colors} lineWidth={1.6} transparent opacity={0.78} depthWrite={false} toneMapped={false} raycast={() => null} />;
+  return <Line ref={line} points={initial} vertexColors={colors} lineWidth={1.9} transparent opacity={0.72} depthWrite={false} toneMapped={false} raycast={() => null} />;
 }
 
 const perEdge = (c: Cardinality, light: boolean) => (c === '1:1' ? 1 : c === '1:N' ? (light ? 2 : 4) : light ? 2 : 4);
@@ -145,47 +154,134 @@ function FlowParticles({ edges, lit, colorOf, light, still }: { edges: Edge[]; l
   );
 }
 
+/** The arrowhead on the referenced table and the dot on the column that holds the key, for every edge. */
+function EndMarkers({ edges, lit, colorOf }: { edges: Edge[]; lit: (e: Edge) => boolean; colorOf: (table: string) => string }) {
+  const heads = useRef<InstancedMesh>(null);
+  const dots = useRef<InstancedMesh>(null);
+  const dummy = useMemo(() => new Object3D(), []);
+  const tangent = useMemo(() => new Vector3(), []);
+  const sizes = useRef<number[]>([]);
+
+  useEffect(() => {
+    const c = new Color();
+    edges.forEach((e, i) => {
+      heads.current?.setColorAt(i, c.set(colorOf(e.to)).multiplyScalar(1.9));
+      dots.current?.setColorAt(i, c.set(colorOf(e.from)).multiplyScalar(1.9));
+    });
+    for (const m of [heads.current, dots.current]) if (m?.instanceColor) m.instanceColor.needsUpdate = true;
+  }, [edges, colorOf]);
+
+  useFrame((_, dt) => {
+    const h = heads.current;
+    const d = dots.current;
+    if (!h || !d) return;
+    const k = 1 - Math.exp(-dt * 8);
+    edges.forEach((e, i) => {
+      const curve = live.curves.get(e.id);
+      const a = live.tables.get(e.from);
+      const b = live.tables.get(e.to);
+      const want = curve && a && b && lit(e) ? Math.min(a.dim, b.dim) : 0;
+      const s = (sizes.current[i] = MathUtils.lerp(sizes.current[i] ?? 0, want, k));
+      if (!curve || s < 0.01) {
+        dummy.scale.setScalar(0);
+        dummy.updateMatrix();
+        h.setMatrixAt(i, dummy.matrix);
+        d.setMatrixAt(i, dummy.matrix);
+        return;
+      }
+      curve.getTangent(1, tangent);
+      dummy.position.copy(curve.v3).addScaledVector(tangent, -ARROW / 2);
+      dummy.quaternion.setFromUnitVectors(UP, tangent);
+      dummy.scale.setScalar(s);
+      dummy.updateMatrix();
+      h.setMatrixAt(i, dummy.matrix);
+      dummy.position.copy(curve.v0);
+      dummy.quaternion.identity();
+      dummy.updateMatrix();
+      d.setMatrixAt(i, dummy.matrix);
+    });
+    h.instanceMatrix.needsUpdate = true;
+    d.instanceMatrix.needsUpdate = true;
+  });
+
+  const n = Math.max(1, edges.length);
+  return (
+    <>
+      <instancedMesh ref={heads} args={[undefined, undefined, n]} key={`h${n}`} frustumCulled={false} raycast={() => null}>
+        <coneGeometry args={[0.23, ARROW, 16]} />
+        <meshBasicMaterial toneMapped={false} />
+      </instancedMesh>
+      <instancedMesh ref={dots} args={[undefined, undefined, n]} key={`d${n}`} frustumCulled={false} raycast={() => null}>
+        <sphereGeometry args={[0.11, 12, 12]} />
+        <meshBasicMaterial toneMapped={false} />
+      </instancedMesh>
+    </>
+  );
+}
+
 const pillCache = new Map<string, { texture: CanvasTexture; aspect: number }>();
-function pill(text: string) {
-  let hit = pillCache.get(text);
+function pill(text: string, fonts: number, color = '#94a3b8', ink = color) {
+  // drawn again once the page's fonts are in
+  const key = `${text}|${color}|${ink}|${fonts}`;
+  let hit = pillCache.get(key);
   if (!hit) {
     const canvas = document.createElement('canvas');
-    const { w, h } = drawPill(canvas, text, { color: '#94a3b8', fill: 'rgba(7,11,20,0.82)' });
+    const { w, h } = drawPill(canvas, text, { color: ink, stroke: color, fill: 'rgba(6,10,18,0.9)' });
     const texture = new CanvasTexture(canvas);
     texture.colorSpace = SRGBColorSpace;
     texture.minFilter = LinearFilter;
     texture.generateMipmaps = false;
     hit = { texture, aspect: w / h };
-    pillCache.set(text, hit);
+    pillCache.set(key, hit);
   }
   return hit;
 }
 
-function CardinalityTag({ edge, lit }: { edge: Edge; lit: boolean }) {
+/** Read along the arrow, from the table holding the key to the one it references. */
+const alongArrow = (c: Cardinality) => (c === '1:N' ? 'N:1' : c);
+
+/** The label at the middle of a line: its cardinality, or the whole reference when the line is in focus. */
+function EdgeLabel({ edge, lit, strong, color, brief }: { edge: Edge; lit: boolean; strong: boolean; color: string; brief: boolean }) {
   const group = useRef<Group>(null);
-  const { texture, aspect } = useMemo(() => pill(edge.cardinality), [edge.cardinality]);
-  useFrame(() => {
+  const mesh = useRef<Mesh>(null);
+  const fonts = useFonts((s) => s.ready);
+  const short = useMemo(() => pill(alongArrow(edge.cardinality), fonts), [edge.cardinality, fonts]);
+  const full = useMemo(
+    () => pill(`${edge.from}.${edge.column}  →  ${edge.to}.${edge.refColumn}   ${alongArrow(edge.cardinality)}`, fonts, color, '#f1f5f9'),
+    [edge, color, fonts],
+  );
+  const shown = strong ? full : short;
+  const size = strong ? 0.46 : 0.32;
+  const fade = useRef(0);
+  useFrame(({ camera }, dt) => {
     const curve = live.curves.get(edge.id);
     const g = group.current;
-    if (!g || !curve) return;
+    const m = mesh.current;
+    if (!g || !m || !curve) return;
     curve.getPoint(0.5, g.position);
-    g.visible = lit && live.tables.has(edge.from);
+    // labels keep to a readable size: smaller than perspective would make them up close, larger far away
+    const k = MathUtils.clamp(camera.position.distanceTo(g.position) / 24, 0.6, 1.8);
+    m.scale.set(size * shown.aspect * k, size * k, 1);
+    const on = lit && (strong || !brief) && live.tables.has(edge.from);
+    fade.current = MathUtils.lerp(fade.current, on ? 1 : 0, 1 - Math.exp(-dt * 8));
+    g.visible = fade.current > 0.02;
+    (m.material as MeshBasicMaterial).opacity = fade.current;
   });
   return (
     <group ref={group} visible={false}>
       <Billboard>
-        <mesh raycast={() => null}>
-          <planeGeometry args={[0.34 * aspect, 0.34]} />
-          <meshBasicMaterial map={texture} transparent depthWrite={false} toneMapped={false} />
+        <mesh ref={mesh} raycast={() => null} renderOrder={strong ? 6 : 5}>
+          <planeGeometry args={[1, 1]} />
+          <meshBasicMaterial map={shown.texture} transparent depthWrite={false} depthTest={!strong} toneMapped={false} />
         </mesh>
       </Billboard>
     </group>
   );
 }
 
-type Props = { schema: SchemaDef; edges: Edge[]; lit: string[] | null; light: boolean; still: boolean };
+type Props = { schema: SchemaDef; edges: Edge[]; lit: string[] | null; selected: string | null; light: boolean; still: boolean };
 
-export function Relationships({ schema, edges, lit, light, still }: Props) {
+export function Relationships({ schema, edges, lit, selected, light, still }: Props) {
   const colorOf = useMemo(() => {
     const byTable = new Map(schema.tables.map((t) => [t.name, schema.domains.find((d) => d.id === t.domain)?.color ?? '#94a3b8']));
     return (table: string) => byTable.get(table) ?? '#94a3b8';
@@ -194,13 +290,18 @@ export function Relationships({ schema, edges, lit, light, still }: Props) {
     const set = lit ? new Set(lit) : null;
     return (e: Edge) => !set || (set.has(e.from) && set.has(e.to));
   }, [lit]);
+  // the lines of the selected table, or of whatever is in focus, are drawn heavier and fully labelled
+  const isStrong = (e: Edge) => (lit ? isLit(e) : selected !== null && (e.from === selected || e.to === selected));
   return (
     <>
       {edges.map((e) => (
-        <RelationshipLine key={e.id} edge={e} schema={schema} colorFrom={colorOf(e.from)} colorTo={colorOf(e.to)} lit={isLit(e)} />
+        <RelationshipLine key={e.id} edge={e} schema={schema} colorFrom={colorOf(e.from)} colorTo={colorOf(e.to)} lit={isLit(e)} strong={isStrong(e)} />
       ))}
+      <EndMarkers edges={edges} lit={isLit} colorOf={colorOf} />
       <FlowParticles edges={edges} lit={isLit} colorOf={colorOf} light={light} still={still} />
-      {!light && edges.map((e) => <CardinalityTag key={e.id} edge={e} lit={isLit(e)} />)}
+      {edges.map((e) => (
+        <EdgeLabel key={e.id} edge={e} lit={isLit(e)} strong={isStrong(e)} color={colorOf(e.to)} brief={light || selected !== null} />
+      ))}
     </>
   );
 }

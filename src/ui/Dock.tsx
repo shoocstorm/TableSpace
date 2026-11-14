@@ -1,9 +1,10 @@
 // The control dock under the scene: camera reset, X-ray, exploded view,
-// clearing the agent's ghost previews, and table search. Above it, a strip
+// clearing the agent's ghost previews, the environment picker, and table search. Above it, a strip
 // names whatever the agent has put in the scene, each with a way to dismiss it.
 
-import { Expand, Ghost, RotateCcw, ScanEye, Search, Shrink, X } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { Check, Expand, Ghost, Mountain, RotateCcw, ScanEye, Search, Shrink, X } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { ENVIRONMENTS } from '../scene/environments';
 import { clearBadges, clearFocus, clearGhosts, clearTrace, clearWhatIf, resetView, toggleExploded, toggleXray, useScene } from '../state/scene';
 import { useUi } from '../state/ui';
 import { shortcut } from './usePhone';
@@ -38,7 +39,52 @@ function Pill({ color, children, onDismiss, label }: { color: string; children: 
   );
 }
 
+/** The worlds to choose from, as tiles painted like them. */
+function EnvironmentPicker({ onClose }: { onClose: () => void }) {
+  const env = useUi((s) => s.env);
+  const setEnv = useUi((s) => s.setEnv);
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  }, [onClose]);
+  return (
+    <>
+      <div className="pointer-events-auto fixed inset-0 z-0" onPointerDown={onClose} />
+      <div role="dialog" aria-label="Choose an environment" className="glass rise !bg-panel pointer-events-auto relative z-10 w-[min(440px,calc(100vw-16px))] rounded-2xl p-3">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="label">Environment</span>
+          <button onClick={onClose} aria-label="Close the environment picker" className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-white/5 hover:text-white">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {ENVIRONMENTS.map((e) => {
+            const on = e.id === env;
+            return (
+              <button key={e.id} onClick={() => setEnv(e.id)} aria-pressed={on} title={e.blurb} className={`group overflow-hidden rounded-xl border text-left transition-colors ${on ? 'border-cyan-300/80' : 'border-white/10 hover:border-white/30'}`}>
+                <span className="relative block h-14" style={{ background: e.swatch }}>
+                  {on && (
+                    <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-cyan-300 text-slate-950">
+                      <Check className="h-3.5 w-3.5" strokeWidth={3} />
+                    </span>
+                  )}
+                </span>
+                <span className="block px-2 py-1.5">
+                  <span className="block text-[12.5px] font-semibold text-slate-100">{e.name}</span>
+                  <span className="block truncate text-[11px] text-slate-400">{e.blurb}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </>
+  );
+}
+
 export function Dock() {
+  const [picking, setPicking] = useState(false);
   const xray = useScene((s) => s.xray);
   const exploded = useScene((s) => s.exploded);
   const ghosts = useScene((s) => s.ghosts.length);
@@ -83,6 +129,8 @@ export function Dock() {
         {xrayIdle && <span className="glass flex h-8 items-center rounded-full px-3 text-[12px] text-slate-300">X-ray is on — select a table to isolate what it depends on</span>}
       </div>
 
+      {picking && <EnvironmentPicker onClose={() => setPicking(false)} />}
+
       <nav aria-label="Scene controls" className="glass pointer-events-auto flex items-center gap-0.5 rounded-2xl p-1">
         <DockButton label="Reset" hint="show the whole schema" onClick={resetView}>
           <RotateCcw className="h-[18px] w-[18px]" />
@@ -95,6 +143,9 @@ export function Dock() {
         </DockButton>
         <DockButton label={ghosts ? `Ghosts ${ghosts}` : 'Ghosts'} hint="clear the AI's ghost previews" disabled={!ghosts} onClick={clearGhosts}>
           <Ghost className="h-[18px] w-[18px]" />
+        </DockButton>
+        <DockButton label="World" hint="choose the environment" active={picking} onClick={() => setPicking((v) => !v)}>
+          <Mountain className="h-[18px] w-[18px]" />
         </DockButton>
         <span className="mx-1 h-7 w-px bg-white/10" />
         <DockButton label="Search" hint={shortcut('K')} onClick={() => setPalette(true)}>

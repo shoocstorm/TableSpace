@@ -60,6 +60,22 @@ export function drawCard(canvas: HTMLCanvasElement, table: Pick<Table, 'name' | 
   const fkCols = new Set(table.fks.map((f) => f.column));
   const pks = table.columns.filter((c) => c.pk).length;
 
+  // a dark pane behind the text keeps it readable over any backdrop; the header carries the domain's color
+  const headPx = HEADER_H * PX;
+  if (!style.ghost) {
+    ctx.fillStyle = 'rgba(5,9,17,0.6)';
+    ctx.fillRect(0, 0, w, h);
+    const band = ctx.createLinearGradient(0, 0, w, 0);
+    band.addColorStop(0, `${style.color}66`);
+    band.addColorStop(1, `${style.color}14`);
+    ctx.fillStyle = band;
+    ctx.fillRect(0, 0, w, headPx);
+    ctx.fillStyle = style.color;
+    ctx.fillRect(0, 0, 9, headPx);
+    ctx.fillStyle = `${style.color}55`;
+    ctx.fillRect(0, headPx - 2, w, 2);
+  }
+
   // header
   ctx.textBaseline = 'middle';
   ctx.fillStyle = style.ghost ? style.color : '#f1f5f9';
@@ -81,12 +97,14 @@ export function drawCard(canvas: HTMLCanvasElement, table: Pick<Table, 'name' | 
 
   if (!style.expanded) return;
   const top = HEADER_H * PX + PAD * PX;
-  ctx.strokeStyle = `${style.color}66`;
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(pad, top - PAD * PX * 0.6);
-  ctx.lineTo(w - pad, top - PAD * PX * 0.6);
-  ctx.stroke();
+  if (style.ghost) {
+    ctx.strokeStyle = `${style.color}66`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(pad, top - PAD * PX * 0.6);
+    ctx.lineTo(w - pad, top - PAD * PX * 0.6);
+    ctx.stroke();
+  }
 
   ctx.font = FONT_ROW;
   const rowPx = ROW_H * PX;
@@ -94,6 +112,14 @@ export function drawCard(canvas: HTMLCanvasElement, table: Pick<Table, 'name' | 
   shown.forEach((c: Column, i) => {
     const y = top + (i + 0.5) * rowPx;
     const isFk = fkCols.has(c.name);
+    if (!style.ghost && (c.pk || isFk)) {
+      // key rows are tinted, so the columns that relationships hang on stand out
+      ctx.fillStyle = c.pk ? 'rgba(251,191,36,0.1)' : 'rgba(103,232,249,0.09)';
+      ctx.fillRect(12, y - rowPx / 2 + 2, w - 24, rowPx - 4);
+    } else if (!style.ghost && i % 2 === 1) {
+      ctx.fillStyle = 'rgba(255,255,255,0.025)';
+      ctx.fillRect(12, y - rowPx / 2, w - 24, rowPx);
+    }
     ctx.fillStyle = c.pk ? '#fbbf24' : isFk ? '#67e8f9' : '#475569';
     ctx.fillText(c.pk ? '◆' : isFk ? '→' : '·', pad, y);
     const type = shortType(c.type) + (c.nullable ? '?' : '');
@@ -112,7 +138,7 @@ export function drawCard(canvas: HTMLCanvasElement, table: Pick<Table, 'name' | 
 }
 
 /** A small label on a canvas: cardinality tags and warning badges. */
-export function drawPill(canvas: HTMLCanvasElement, text: string, opts: { color: string; fill: string; font?: string; icon?: string }): { w: number; h: number } {
+export function drawPill(canvas: HTMLCanvasElement, text: string, opts: { color: string; fill: string; font?: string; icon?: string; /** The outline, when it differs from the text. */ stroke?: string }): { w: number; h: number } {
   const ctx = canvas.getContext('2d')!;
   const font = opts.font ?? '600 30px "JetBrains Mono", ui-monospace, monospace';
   ctx.font = font;
@@ -123,7 +149,7 @@ export function drawPill(canvas: HTMLCanvasElement, text: string, opts: { color:
   canvas.height = h;
   ctx.font = font;
   ctx.fillStyle = opts.fill;
-  ctx.strokeStyle = opts.color;
+  ctx.strokeStyle = opts.stroke ?? opts.color;
   ctx.lineWidth = 3;
   ctx.beginPath();
   ctx.roundRect(2, 2, w - 4, h - 4, 18);

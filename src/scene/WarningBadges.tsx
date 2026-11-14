@@ -18,14 +18,14 @@ function Badge({ table, findings, index }: { table: string; findings: Finding[];
   const text = findings.length > 1 ? `${worst.title} +${findings.length - 1}` : worst.title;
   const color = SEVERITY_COLOR[worst.severity];
   const texture = useCanvasTexture((c) => void (size.current = drawPill(c, text, { color, fill: 'rgba(10,8,12,0.9)', icon: '⚠', font: '600 30px "Inter", system-ui, sans-serif' })), [text, color]);
-  const stem = useMemo(() => [0, -0.55, 0] as const, []);
+  const stem = useMemo(() => [0, -0.9, 0] as const, []);
 
   useFrame(({ clock }) => {
     const g = group.current;
     const t = live.tables.get(table);
     if (!g || !t) return;
     g.visible = true;
-    g.position.set(t.pos.x, t.pos.y + t.height / 2 + 1.05 + Math.sin(clock.elapsedTime * 1.8 + index) * 0.1, t.pos.z);
+    g.position.set(t.pos.x, t.pos.y + t.height / 2 + 1.75 + Math.sin(clock.elapsedTime * 1.8 + index) * 0.1, t.pos.z);
     const plane = g.children[0]?.children[0];
     if (plane) plane.scale.set((size.current.w / size.current.h) * 0.62, 0.62, 1);
   });
@@ -39,7 +39,7 @@ function Badge({ table, findings, index }: { table: string; findings: Finding[];
         </mesh>
       </Billboard>
       <mesh position={stem} raycast={() => null}>
-        <cylinderGeometry args={[0.012, 0.012, 0.5, 6]} />
+        <cylinderGeometry args={[0.012, 0.012, 1.2, 6]} />
         <meshBasicMaterial color={color} toneMapped={false} />
       </mesh>
     </group>

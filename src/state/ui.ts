@@ -17,6 +17,9 @@ type UiState = {
   setModels: (open: boolean) => void;
   setImport: (open: boolean) => void;
   setResult: (result: UiState['result']) => void;
+  /** The id of the 3D environment (see scene/environments). */
+  env: string;
+  setEnv: (env: string) => void;
 };
 
 const startsOnPhone = typeof window !== 'undefined' && !!window.matchMedia?.(PHONE_QUERY).matches;
@@ -35,7 +38,9 @@ export const useUi = create<UiState>()(
       setModels: (modelsOpen) => set({ modelsOpen }),
       setImport: (importOpen) => set({ importOpen }),
       setResult: (result) => set({ result }),
+      env: 'space',
+      setEnv: (env) => set({ env }),
     }),
-    { name: 'tablespace.ui', storage: createJSONStorage(() => localStorage), partialize: (s) => ({ drawerOpen: s.drawerOpen }) },
+    { name: 'tablespace.ui', storage: createJSONStorage(() => localStorage), partialize: (s) => ({ drawerOpen: s.drawerOpen, env: s.env }) },
   ),
 );
