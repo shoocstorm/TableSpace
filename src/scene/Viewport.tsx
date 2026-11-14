@@ -5,6 +5,7 @@ import { Canvas } from '@react-three/fiber';
 import { Bloom, EffectComposer, Vignette } from '@react-three/postprocessing';
 import { useEffect, useMemo } from 'react';
 import { litTables, positionsOf, selectTable, toggleExpanded, useScene } from '../state/scene';
+import { isMobileDevice, useEngine } from '../llm/engine';
 import { useUi } from '../state/ui';
 import { usePhone, useReducedMotion } from '../ui/usePhone';
 import { Backdrop } from './Backdrop';
@@ -90,8 +91,10 @@ function Scene({ phone, still }: { phone: boolean; still: boolean }) {
 export function Viewport() {
   const phone = usePhone();
   const still = useReducedMotion();
+  // while a phone warms a model up, the scene holds still: the load gets the CPU, and no frame allocates beside it
+  const warming = useEngine((s) => s.status === 'loading') && isMobileDevice;
   return (
-    <Canvas dpr={[1, phone ? 1.5 : 2]} camera={{ fov: 50, near: 0.5, far: 600, position: [8, 14, 60] }} gl={{ antialias: !phone, powerPreference: 'high-performance' }} onPointerMissed={() => selectTable(null)}>
+    <Canvas frameloop={warming ? 'never' : 'always'} dpr={[1, phone ? 1.5 : 2]} camera={{ fov: 50, near: 0.5, far: 600, position: [8, 14, 60] }} gl={{ antialias: !phone, powerPreference: 'high-performance' }} onPointerMissed={() => selectTable(null)}>
       <Scene phone={phone} still={still} />
     </Canvas>
   );

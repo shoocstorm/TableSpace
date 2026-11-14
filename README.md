@@ -110,13 +110,25 @@ Any other static host works if it can send the same headers. `vite.config.ts` re
 
 Under 640 px the AI drawer becomes a bottom sheet with the scene above it, tables stay folded until tapped, and the scene is lighter (lower pixel ratio, weaker bloom, fewer particles, no star field). Models load CPU-only with a 2,048-token context on phones, because iOS closes a tab that uses too much memory; a load that fails or crashes the tab steps down further on the next try. `prefers-reduced-motion` stops particle flows and makes camera moves instant.
 
+### Models on a phone
+
+iOS closes a Safari tab that grows past its memory limit, with no error: the page just reloads. The 639 MB Qwen3 0.6B file did that beside the 3D scene. The loader now follows what BloomGrid measured for the same problem (`src/llm/device.ts`, `models.ts`):
+
+- **Phones list one model**, `Qwen3 0.6B · phone`: the same 0.6B model as a 397 MB Q4_K_M file. A bigger model is refused on a phone and never autoloaded there; one downloaded earlier is still listed so it can be deleted.
+- **Lean load options on the CPU plan** (`loadParams`): q8_0 K and V cache with flash attention, one sequence instead of wllama's four, 256-token batches.
+- **Prompts are trimmed to the loaded context** (`fitMessages`): phones load 2,048 tokens, or 1,024 after a failure, and a longer prompt would fail.
+- **The scene holds still while a phone warms a model up**, so the load has the CPU and no frame allocates beside it.
+- As before: a failed load steps down a level, and a page that died mid-load is recognised on the next launch, explained, retried lighter and not autoloaded again.
+
+Measured in headless Chrome emulating an iPhone (its user agent and screen, the compat engine build): the page with the scene and the loaded model holds about 1.2 GB (the scene alone about 0.2 GB), CPU only, 2,048-token context. The first load peaked near 1.6 GB while the file was also being downloaded and verified.
+
 ## What was checked
 
 - `bun run test`: 61 unit tests over the graph, layout, audit, SQL reader, plan simulation, query builder, refactor proposals, seeding, grammar and router. Every generated query in the tests is read back and planned, and every pair of connected tables in both schemas is joined and parsed.
 - The production build under `bun run preview`, in headless Chrome at 1440×900 and 390×844 (emulated phone): cross-origin isolated, service worker registered, no console errors or CSP violations; every chip, typed SQL, search, the second schema and the exploded view were looked at in screenshots.
 - Qwen3 0.6B loaded in Chrome on a Mac (WebGPU, 29/29 layers, about 125 tok/s) and answered free-form prompts through the agent loop, including seven SQL requests whose output was read by hand. Generated SQL was not run against a real PostgreSQL.
 
-Not checked: a real phone (emulation only, and no model was loaded at phone size), Safari and Firefox, and an actual Firebase deploy.
+Not checked: a real phone (emulation only; the phone model was loaded and prompted in iPhone emulation, which has no iOS memory limit), Safari and Firefox, and an actual Firebase deploy.
 
 ## Layout
 

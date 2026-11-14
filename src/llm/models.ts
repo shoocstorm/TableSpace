@@ -16,6 +16,8 @@ export type ModelDef = {
   /** Qwen3-style `<think>` support, toggled by `enable_thinking`. */
   thinking: boolean;
   n_ctx: number;
+  /** Small enough to load on a phone beside the 3D scene (phones list only these). */
+  phone?: boolean;
 };
 
 // A commit URL always serves the same bytes; `main` can be moved under us.
@@ -30,7 +32,7 @@ export const MODELS: ModelDef[] = [
     bytes: 639_446_688,
     url: HF('Qwen/Qwen3-0.6B-GGUF', '23749fefcc72300e3a2ad315e1317431b06b590a', 'Qwen3-0.6B-Q8_0.gguf'),
     sha256: '9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031',
-    note: 'Fast, and small enough for phones. Picks tools reliably; its explanations are short.',
+    note: 'Fast. Picks tools reliably; its explanations are short.',
     thinking: true,
     n_ctx: 4096,
   },
@@ -46,7 +48,26 @@ export const MODELS: ModelDef[] = [
     thinking: true,
     n_ctx: 4096,
   },
+  {
+    // iOS closes a tab past its memory limit, and the 3D scene holds part of it: the Q8_0 file (639 MB)
+    // reloaded the page on an iPhone. Q4_K_M is the same 0.6B model in 397 MB (measured in BloomGrid, D-108).
+    id: 'qwen3-0.6b-q4',
+    name: 'Qwen3 0.6B · phone',
+    family: 'Q4_K_M · 596M params',
+    size: '397 MB',
+    bytes: 396_705_472,
+    url: HF('unsloth/Qwen3-0.6B-GGUF', '50968a4468ef4233ed78cd7c3de230dd1d61a56b', 'Qwen3-0.6B-Q4_K_M.gguf'),
+    sha256: 'ac2d97712095a558e31573f62f466a3f9d93990898b0ec79d7c974c1780d524a',
+    note: 'For phones: the 0.6B model in a smaller file, so it fits in the memory a phone gives a page. A little less precise.',
+    thinking: true,
+    n_ctx: 4096,
+    phone: true,
+  },
 ];
 
 export const DEFAULT_MODEL = 'qwen3-0.6b';
+/** The models this device can run: on phones only the `phone` ones. */
+export const availableModels = (mobile: boolean): ModelDef[] => MODELS.filter((m) => !mobile || m.phone);
+/** What to suggest first. */
+export const recommendedModel = (mobile: boolean): ModelDef => MODELS.find((m) => (mobile ? m.phone : m.id === DEFAULT_MODEL))!;
 export const modelById = (id: string | null | undefined) => MODELS.find((m) => m.id === id);

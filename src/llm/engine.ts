@@ -12,13 +12,16 @@
 // - iOS closes a tab that grows past its memory limit, with no error: phones
 //   load on the CPU with a smaller context (device.ts), and a load in
 //   progress is marked so the next launch can say what happened.
+//   Beside a 3D scene that was still not enough for the 639 MB Qwen3 0.6B file
+//   (BloomGrid measured the same, D-108): phones run only the `phone` models
+//   and load them with a lean KV cache (`loadParams`).
 // - This build can't turn a JSON Schema into a grammar; a GBNF string works.
 
 import { ModelManager, Wllama, WllamaAbortError, type ChatCompletionParams, type ChatCompletionResponse } from '@wllama/wllama';
 import { create } from 'zustand';
-import { crashMessage, describeLoadError, detectDevice, isFatalLog, loadPlan, MAX_LEVEL, planText, startLevel, type LoadPlan } from './device';
+import { crashMessage, describeLoadError, detectDevice, fitMessages, isFatalLog, loadParams, loadPlan, MAX_LEVEL, planText, startLevel, type LoadPlan } from './device';
 import { verifyBlobs } from './integrity';
-import { MODELS, modelById, type ModelDef } from './models';
+import { availableModels, MODELS, modelById, recommendedModel, type ModelDef } from './models';
 import { IsolatedWllama } from './wasm';
 
 const asset = (path: string) => new URL(path, window.location.href).href;
@@ -143,16 +146,6 @@ function withinWarmup<T>(p: Promise<T>, watch: NativeWatch, onStop: () => void):
   ]);
 }
 
-function wllamaParams(plan: LoadPlan) {
-  return {
-    n_ctx: plan.n_ctx,
-    // CPU only: wllama then doesn't initialize WebGPU at all
-    ...(plan.gpu ? {} : { n_gpu_layers: 0 }),
-    // keep <think> blocks in the raw stream; the agent strips them itself
-    reasoning_format: 'none' as const,
-  };
-}
-
 const isEvent = (v: unknown): v is Event => typeof Event !== 'undefined' && v instanceof Event;
 const logText = (v: unknown): string => (isEvent(v) ? `worker error: ${(v as ErrorEvent).message || v.type}` : String(v));
 
@@ -182,7 +175,7 @@ async function warmUp(id: string, model: Awaited<ReturnType<typeof openVerified>
   const w = newWllama(onGpu, watch);
   localStorage.setItem(ATTEMPT_KEY, JSON.stringify({ id, level: plan.level, at: Date.now() } satisfies Attempt));
   try {
-    await withinWarmup(w.loadModel(model, wllamaParams(plan)), watch, () => void w.exit().catch(() => {}));
+    await withinWarmup(w.loadModel(model, loadParams(plan) as Parameters<Wllama['loadModel']>[1]), watch, () => void w.exit().catch(() => {}));
     return w;
   } catch (e) {
     await w.exit().catch(() => {});
@@ -247,6 +240,11 @@ export async function loadModel(id: string): Promise<void> {
   if (!def) throw new Error(`unknown model ${id}`);
   const { status, loadedId } = useEngine.getState();
   if (status === 'loading' || loadedId === id) return;
+  // a phone can't hold a bigger model beside the scene: iOS would close the page mid-load
+  if (device.mobile && !def.phone) {
+    useEngine.setState({ status: 'error', error: `${def.name} is too big for a phone: the browser would close the page while loading it. Use ${recommendedModel(true).name}.` });
+    return;
+  }
   if (loadedId) await unloadModel();
 
   useEngine.setState({ status: 'loading', loadingId: id, error: null, progress: { loaded: 0, total: def.bytes, speed: 0, phase: 'Connecting' } });
@@ -310,6 +308,11 @@ function readInfo(w: Wllama, gpu: { layers: number; total: number } | null): Eng
   };
 }
 
+/** The models offered on this device. */
+export const DEVICE_MODELS: ModelDef[] = availableModels(device.mobile);
+/** The loaded context, for trimming prompts to it. */
+const contextSize = (def: ModelDef): number => useEngine.getState().nCtx ?? def.n_ctx;
+
 export const loadedModel = (): ModelDef | undefined => modelById(useEngine.getState().loadedId);
 export const hasModel = (): boolean => !!wllama && useEngine.getState().status === 'ready';
 export const isAbort = (e: unknown) => e instanceof WllamaAbortError || (e instanceof Error && e.name === 'AbortError');
@@ -325,7 +328,7 @@ export async function complete(messages: ChatMessage[], opts: { grammar: string;
   useEngine.setState({ generating: true });
   try {
     const response: ChatCompletionResponse = await w.createChatCompletion({
-      messages,
+      messages: fitMessages(messages, contextSize(def), opts.maxTokens),
       stream: false,
       grammar: opts.grammar,
       max_tokens: opts.maxTokens,
@@ -352,7 +355,7 @@ export async function* chat(messages: ChatMessage[], opts: { temperature: number
   let tokens = 0;
   try {
     const stream = await w.createChatCompletion({
-      messages,
+      messages: fitMessages(messages, contextSize(def), opts.maxTokens),
       stream: true,
       abortSignal: opts.signal,
       max_tokens: opts.maxTokens,
@@ -383,7 +386,7 @@ export async function autoload(): Promise<void> {
   const crashed = checkCrashedLoad();
   await refreshCache();
   const def = modelById(readLast());
-  if (def && def.id !== crashed && useEngine.getState().cached[def.url]) await loadModel(def.id);
+  if (def && def.id !== crashed && (!device.mobile || def.phone) && useEngine.getState().cached[def.url]) await loadModel(def.id);
 }
 
 function readLast(): string | null {

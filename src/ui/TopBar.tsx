@@ -3,7 +3,7 @@
 
 import { ChevronDown, Cpu, Database, Download, LoaderCircle, Sparkles, Trash2, TriangleAlert, X } from 'lucide-react';
 import { useEffect, useRef } from 'react';
-import { evictModel, isMobileDevice, loadModel, MODELS, plannedLoad, unloadModel, useEngine } from '../llm/engine';
+import { DEVICE_MODELS, evictModel, isMobileDevice, loadModel, MODELS, plannedLoad, unloadModel, useEngine } from '../llm/engine';
 import { planText } from '../llm/device';
 import { BUILT_IN, useRegistry } from '../schema/registry';
 import { setSchema, useScene } from '../state/scene';
@@ -105,8 +105,10 @@ function ModelMenu({ onClose }: { onClose: () => void }) {
       </p>
 
       <div className="space-y-2">
-        {MODELS.map((m) => {
+        {/* a phone lists its own models, plus any bigger download left on it so it can be deleted */}
+        {MODELS.filter((m) => DEVICE_MODELS.includes(m) || engine.cached[m.url]).map((m) => {
           const cached = !!engine.cached[m.url];
+          const fits = DEVICE_MODELS.includes(m);
           const loading = engine.loadingId === m.id;
           const loaded = engine.loadedId === m.id;
           const pct = loading && engine.progress?.total ? (engine.progress.loaded / engine.progress.total) * 100 : 0;
@@ -134,7 +136,7 @@ function ModelMenu({ onClose }: { onClose: () => void }) {
                       <Trash2 className="h-4 w-4" />
                     </button>
                   )}
-                  {loaded ? (
+                  {!fits ? null : loaded ? (
                     <button onClick={() => void unloadModel()} className="h-9 rounded-lg border border-white/10 px-3 text-[13px] font-semibold text-slate-200 hover:bg-white/5">
                       Unload
                     </button>
@@ -151,7 +153,8 @@ function ModelMenu({ onClose }: { onClose: () => void }) {
                 </div>
               </div>
               <p className="mt-1.5 text-[12.5px] leading-snug text-slate-400">{m.note}</p>
-              {isMobileDevice && !loaded && <p className="mt-1 text-[12px] text-slate-500">On this device: {planText(plannedLoad(m))}.</p>}
+              {!fits && <p className="mt-1 text-[12px] text-amber-200">Too big to load on a phone: the browser would close the page. Delete it to free {m.size}.</p>}
+              {isMobileDevice && fits && !loaded && <p className="mt-1 text-[12px] text-slate-500">On this device: {planText(plannedLoad(m))}.</p>}
               {loading && engine.progress && (
                 <div className="mt-2.5">
                   <div className="h-1.5 overflow-hidden rounded-full bg-white/8">

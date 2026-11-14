@@ -42,6 +42,53 @@ export function startLevel(device: Device, failedBefore: number | undefined): nu
   return Math.min(MAX_LEVEL, Math.max(base, failedBefore ?? 0));
 }
 
+/**
+ * wllama's load options for a plan. CPU plans (every phone load) also ask for
+ * less memory, because the 3D scene already holds part of what iOS gives the
+ * tab: a q8_0 KV cache (half of f16; a quantised V cache needs flash
+ * attention, which llama.cpp's CPU backend has), one sequence instead of
+ * wllama's 4, and 256-token batches (smaller compute buffers). Measured in
+ * BloomGrid (D-108) at 2,048 tokens: KV 224 → 119 MiB, compute 28 → 14 MiB.
+ * The GPU plan keeps wllama's defaults.
+ */
+export function loadParams(plan: LoadPlan): Record<string, unknown> {
+  // reasoning_format none: <think> blocks stay in the raw stream; the agent strips them itself
+  const base = { n_ctx: plan.n_ctx, reasoning_format: 'none' };
+  if (plan.gpu) return base;
+  return {
+    ...base,
+    // CPU only: wllama then doesn't initialise WebGPU at all
+    n_gpu_layers: 0,
+    cache_type_k: 'q8_0',
+    cache_type_v: 'q8_0',
+    flash_attn: true,
+    n_parallel: 1,
+    n_batch: 256,
+    n_ubatch: 256,
+  };
+}
+
+/**
+ * Trims a prompt to what the loaded context can hold (phones load 2,048 or
+ * 1,024 tokens): llama.cpp fails a request longer than the context. Sizes are
+ * estimated at 3 characters a token, which errs on the long side for English
+ * and SQL. Older turns of the conversation go first, then the end of the
+ * longest message. The system prompt and the last message always stay.
+ */
+export function fitMessages<M extends { role: string; content: string }>(messages: M[], nCtx: number, maxTokens: number): M[] {
+  const budget = Math.max(600, (nCtx - maxTokens - 48) * 3);
+  const size = (ms: M[]) => ms.reduce((n, m) => n + m.content.length + 12, 0);
+  let out = [...messages];
+  while (size(out) > budget && out.length > 2) out.splice(out[0].role === 'system' ? 1 : 0, 1);
+  while (size(out) > budget) {
+    const i = out.reduce((best, m, j) => (m.content.length > out[best].content.length ? j : best), 0);
+    const over = size(out) - budget;
+    if (out[i].content.length <= 200) break;
+    out = out.map((m, j) => (j === i ? { ...m, content: `${m.content.slice(0, Math.max(200, m.content.length - over - 1))}…` } : m));
+  }
+  return out;
+}
+
 /** A one-line summary of a plan, for the progress line and the error. */
 export function planText(p: LoadPlan): string {
   return `${p.gpu ? 'GPU' : 'CPU only'}, ${p.n_ctx.toLocaleString('en-US')}-token context`;
@@ -57,7 +104,7 @@ const FATAL = /Aborted\(|worker sent an error|Cannot enlarge memory|out of memor
 export const isFatalLog = (line: string): boolean => FATAL.test(line);
 
 const COMPILE = /CompileError|doesn't parse|is not enabled/i;
-const MEMORY = /out of memory|\bOOM\b|bad_alloc|failed to allocate|could not allocate|unable to allocate|Cannot allocate|memory access out of bounds|RangeError.*(memory|buffer|allocation)|Maximum call stack|Aborted\(/i;
+const MEMORY = /out of memory|\bOOM\b|bad_alloc|failed to allocate|could not allocate|unable to allocate|Cannot allocate|Cannot enlarge memory|memory access out of bounds|RangeError.*(memory|buffer|allocation)|Maximum call stack|Aborted\(/i;
 const STORAGE = /QuotaExceeded|quota|NoModificationAllowed|not enough space|storage/i;
 const NETWORK = /Failed to fetch|NetworkError|network|Load failed|ERR_|HTTP (4|5)\d\d|status (4|5)\d\d/i;
 const GPU = /webgpu|GPUDevice|adapter|device lost/i;
