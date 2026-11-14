@@ -1,0 +1,158 @@
+@import 'tailwindcss';
+
+/* Fonts are bundled (public/fonts): COEP blocks cross-origin font loads, and
+   the app has to work offline. The 3D card faces draw with these too. */
+@font-face {
+  font-family: 'Inter';
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/inter-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/inter-600.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Space Grotesk';
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/grotesk-600.woff2') format('woff2'), url('/fonts/grotesk-600.woff') format('woff');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/mono-500.woff2') format('woff2'), url('/fonts/mono-500.woff') format('woff');
+}
+
+@theme {
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-display: 'Space Grotesk', 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* cyber-slate: the scene's background and the panels floating over it */
+  --color-void: #060a12;
+  --color-panel: #0b1322;
+  --color-panel-2: #111c30;
+  --color-line: #1e2c46;
+  --color-accent: #22d3ee;
+  --color-ghost: #5eead4;
+
+  --drawer-w: 400px;
+  --sheet-h: 58dvh;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-void);
+  color: #e2e8f0;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* The canvas takes drags and pinches for the camera; the page must not scroll or zoom under them. */
+canvas {
+  touch-action: none;
+  display: block;
+}
+
+@utility glass {
+  background: color-mix(in oklab, var(--color-panel) 93%, transparent);
+  border: 1px solid color-mix(in oklab, #7dd3fc 14%, transparent);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  box-shadow:
+    0 10px 40px -12px rgb(0 0 0 / 0.7),
+    inset 0 1px 0 rgb(255 255 255 / 0.04);
+}
+
+@utility label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+@utility thin-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #24344f transparent;
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* In the base layer, so utilities like text-[13px] still win. */
+@layer base {
+  button,
+  select,
+  textarea,
+  input {
+    font: inherit;
+    color: inherit;
+  }
+}
+
+button:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+input:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Safari zooms into a focused field under 16px. */
+@media (max-width: 640px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.rise {
+  animation: rise 220ms ease-out both;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0.25;
+  }
+}
+.blink {
+  animation: blink 1s steps(2) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise,
+  .blink,
+  .animate-spin,
+  .animate-pulse {
+    animation: none !important;
+  }
+  * {
+    transition-duration: 0.01ms !important;
+  }
+}

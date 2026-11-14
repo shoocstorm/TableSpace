@@ -1,0 +1,41 @@
+{
+  "name": "tablespace",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --bun vite",
+    "build": "bun --bun tsc --noEmit && bun --bun vite build",
+    "preview": "bun --bun vite preview",
+    "typecheck": "bun --bun tsc --noEmit",
+    "test": "vitest run",
+    "deploy:web": "bun run build && firebase deploy --only hosting",
+    "postinstall": "bun scripts/copy-wllama.mjs"
+  },
+  "dependencies": {
+    "@react-three/drei": "10.7.9",
+    "@react-three/fiber": "9.8.2",
+    "@react-three/postprocessing": "3.2.2",
+    "@wllama/wllama": "3.6.1",
+    "@wllama/wllama-compat": "3.6.1",
+    "d3-force-3d": "3.0.6",
+    "lucide-react": "1.72.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "three": "0.187.0",
+    "zustand": "5.0.15"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.5",
+    "@types/node": "26.6.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/three": "0.187.0",
+    "@vitejs/plugin-react": "6.1.1",
+    "tailwindcss": "4.3.5",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vite-plugin-pwa": "2.0.0",
+    "vitest": "5.0.5"
+  }
+}

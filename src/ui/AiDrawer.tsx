@@ -1,0 +1,372 @@
+// The AI drawer: a chat with the local data architect. On a computer it is
+// a panel on the right; on a phone a sheet over the lower part of the screen,
+// so the scene it controls stays visible above it.
+
+import { ArrowUp, Check, Copy, LoaderCircle, Play, Sparkles, Square, Trash2, TriangleAlert, X } from 'lucide-react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { RULE_LABEL } from '../analysis/audit';
+import type { Block, ToolCall } from '../agent/tools';
+import { MODELS, useEngine } from '../llm/engine';
+import { edgesOf, formatRows } from '../schema/graph';
+import type { SchemaDef } from '../schema/types';
+import { scanColor } from '../scene/QueryPulses';
+import { SEVERITY_COLOR } from '../scene/WarningBadges';
+import { clearChat, send, stop, useChat, type Message } from '../state/chat';
+import { ghostPositions } from '../scene/Ghosts';
+import { focusTables, positionsOf, selectTable, startTrace, useScene } from '../state/scene';
+import { useUi } from '../state/ui';
+
+type Chip = { label: string; call: ToolCall };
+
+/** A count worth asking for in any schema: the rows of the largest child table, per row of its parent. */
+function sqlChip(schema: SchemaDef): Chip | null {
+  const rows = (name: string) => schema.tables.find((t) => t.name === name)?.rows ?? 0;
+  const edge = edgesOf(schema)
+    .filter((e) => e.cardinality === '1:N' && e.from !== e.to)
+    .sort((a, b) => rows(b.from) - rows(a.from))[0];
+  if (!edge) return null;
+  const one = edge.to.replace(/ies$/, 'y').replace(/s$/, '').replace(/_/g, ' ');
+  return { label: `Write SQL: count ${edge.from.replace(/_/g, ' ')} per ${one}`, call: { tool: 'write_sql', args: { tables: [edge.from, edge.to] }, useText: true } };
+}
+
+/** One-click prompts for the active database. Each names its tool outright, so a chip never depends on a guess. */
+export function chipsFor(schema: SchemaDef): Chip[] {
+  const preset = schema.presets[0];
+  const domain = schema.domains[Math.min(3, schema.domains.length - 1)];
+  const sql = sqlChip(schema);
+  return [
+    { label: 'Audit missing indexes', call: { tool: 'audit_schema', args: { rule: 'missing_fk_index' } } },
+    ...(preset ? [{ label: `Simulate ${preset.id.replace(/_/g, ' ')} join`, call: { tool: 'trace_query' as const, args: { preset: preset.id } } }] : []),
+    ...(sql ? [sql] : []),
+    { label: 'Normalize bloated tables', call: { tool: 'propose_refactor', args: { table: 'auto', strategy: 'auto' } } },
+    { label: 'Full anti-pattern radar', call: { tool: 'audit_schema', args: { rule: 'all' } } },
+    { label: `Show the ${domain.label.toLowerCase()} domain`, call: { tool: 'focus_tables', args: { domain: domain.id, tables: [], hops: '0' } } },
+    { label: 'Seed mock data', call: { tool: 'seed_data', args: { scope: 'all', size: 'small' } } },
+  ];
+}
+
+/** Bold, inline code and line breaks: all the formatting answers use. Rendered as elements, never as HTML. */
+function Rich({ text }: { text: string }) {
+  return (
+    <>
+      {text.split(/\n{2,}/).map((para, i) => (
+        <p key={i} className="whitespace-pre-wrap">
+          {para.split(/(\*\*[^*]+\*\*|`[^`]+`|\*[^*\n]+\*)/g).map((part, j) => {
+            if (/^\*\*[^*]+\*\*$/.test(part)) return <strong key={j} className="font-semibold text-slate-50">{part.slice(2, -2)}</strong>;
+            if (/^`[^`]+`$/.test(part)) return <code key={j} className="rounded bg-white/8 px-1 py-0.5 font-mono text-[0.88em] text-cyan-200">{part.slice(1, -1)}</code>;
+            if (/^\*[^*\n]+\*$/.test(part)) return <em key={j} className="text-slate-100">{part.slice(1, -1)}</em>;
+            return <Fragment key={j}>{part}</Fragment>;
+          })}
+        </p>
+      ))}
+    </>
+  );
+}
+
+function SqlBlock({ title, sql }: { title: string; sql: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    void navigator.clipboard?.writeText(sql).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+  return (
+    <div className="overflow-hidden rounded-xl border border-white/8 bg-black/30">
+      <div className="flex items-center justify-between border-b border-white/8 pl-3 pr-1">
+        <span className="label">{title}</span>
+        <button onClick={copy} className="flex h-8 items-center gap-1.5 rounded-lg px-2 text-[11.5px] text-slate-400 hover:text-white">
+          {copied ? <Check className="h-3.5 w-3.5 text-emerald-300" /> : <Copy className="h-3.5 w-3.5" />}
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <pre className="thin-scroll max-h-64 overflow-auto p-3 font-mono text-[11.5px] leading-relaxed text-slate-300">{sql}</pre>
+    </div>
+  );
+}
+
+function TableChip({ name, suffix }: { name: string; suffix?: string }) {
+  return (
+    <button onClick={() => selectTable(name, { fly: true, expand: true })} className="rounded-md border border-white/10 bg-white/[0.03] px-1.5 py-0.5 font-mono text-[11.5px] text-slate-200 hover:border-cyan-400/50 hover:text-cyan-200">
+      {name}
+      {suffix && <span className="ml-1 text-slate-500">{suffix}</span>}
+    </button>
+  );
+}
+
+function BlockView({ block }: { block: Block }) {
+  const activeSql = useScene((s) => s.trace?.sql);
+  const traceStep = useScene((s) => s.traceStep);
+  switch (block.kind) {
+    case 'sql':
+      return <SqlBlock title={block.title} sql={block.sql} />;
+    case 'checks':
+      return (
+        <div className="rounded-xl border border-white/8 bg-white/[0.02] p-2.5">
+          <div className="label mb-1">What I understood</div>
+          <p className="mb-2.5 text-[13px] leading-snug text-slate-200">{block.understood}</p>
+          <div className="label mb-1">Checked</div>
+          <ul className="space-y-1">
+            {block.checks.map((c, i) => (
+              <li key={i} className="flex gap-2 text-[12.5px] leading-snug">
+                {c.ok ? <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-300" aria-label="verified" /> : <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-300" aria-label="check this" />}
+                <span className={c.ok ? 'text-slate-400' : 'text-amber-100'}>{c.text}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      );
+    case 'tables':
+      return (
+        <div className="flex flex-wrap gap-1.5">
+          {block.tables.map((t) => (
+            <TableChip key={t} name={t} />
+          ))}
+        </div>
+      );
+    case 'findings':
+      return (
+        <ul className="space-y-1.5">
+          {block.findings.map((f, i) => (
+            <li key={i}>
+              <button onClick={() => selectTable(f.table, { fly: true, expand: true })} className="flex w-full gap-2.5 rounded-xl border border-white/8 bg-white/[0.02] p-2.5 text-left hover:border-white/20">
+                <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" style={{ color: SEVERITY_COLOR[f.severity] }} aria-label={f.severity} />
+                <span className="min-w-0">
+                  <span className="block font-mono text-[12px] text-slate-100">
+                    {f.table}
+                    {f.column && <span className="text-slate-400">.{f.column}</span>}
+                    <span className="label ml-2" style={{ color: SEVERITY_COLOR[f.severity] }}>
+                      {RULE_LABEL[f.rule]}
+                    </span>
+                  </span>
+                  <span className="mt-0.5 block text-[12.5px] leading-snug text-slate-400">{f.detail}</span>
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      );
+    case 'plan': {
+      const live = activeSql === block.sql;
+      return (
+        <div className="rounded-xl border border-white/8 bg-white/[0.02] p-2.5">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="label">Simulated plan · {block.steps.length} steps</span>
+            {!live && (
+              <button onClick={() => startTrace({ label: block.label, sql: block.sql, steps: block.steps })} className="flex h-7 items-center gap-1 rounded-lg border border-white/10 px-2 text-[11.5px] text-slate-300 hover:text-white">
+                <Play className="h-3 w-3" /> Replay
+              </button>
+            )}
+          </div>
+          <ol className="space-y-1">
+            {block.steps.map((s, i) => (
+              <li key={i} className={`flex items-start gap-2 rounded-lg px-1.5 py-1 transition-colors ${live && traceStep === i ? 'bg-white/8' : ''}`}>
+                <span className="mt-[5px] h-2 w-2 shrink-0 rounded-full" style={{ background: scanColor(s), boxShadow: live && traceStep === i ? `0 0 10px ${scanColor(s)}` : undefined }} />
+                <span className="min-w-0 text-[12.5px] leading-snug">
+                  <span className="font-mono text-slate-100">{s.table}</span>{' '}
+                  <span className="font-mono text-[11px]" style={{ color: scanColor(s) }}>
+                    {s.scan === 'index' ? 'index scan' : s.slow ? 'SEQ SCAN · slow' : 'seq scan'}
+                  </span>
+                  <span className="block text-slate-400">
+                    {s.note} · ~{formatRows(s.rowsRead)} rows
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ol>
+          <details className="mt-2">
+            <summary className="label cursor-pointer select-none py-1 hover:text-slate-300">Query</summary>
+            <pre className="thin-scroll mt-1 overflow-auto rounded-lg bg-black/30 p-2.5 font-mono text-[11.5px] leading-relaxed text-slate-300">{block.sql}</pre>
+          </details>
+        </div>
+      );
+    }
+    case 'ghosts':
+      return (
+        <div className="rounded-xl border border-teal-300/25 bg-teal-300/[0.04] p-2.5">
+          <div className="label mb-1.5 !text-teal-300">
+            Ghost preview · {block.table}: {block.before} → {block.after} columns
+          </div>
+          <ul className="space-y-1.5">
+            {block.ghosts.map((g) => (
+              <li key={g.name} className="text-[12.5px] leading-snug">
+                <span className="font-mono text-teal-200">{g.name}</span> <span className="text-slate-500">· {g.columns.length} columns</span>
+                <span className="block text-slate-400">{g.reason}</span>
+              </li>
+            ))}
+          </ul>
+          <button onClick={() => focusTables([block.table], `Refactor · ${block.table}`, [...ghostPositions(block.ghosts, positionsOf(useScene.getState())).values()])} className="mt-2 text-[12px] text-teal-300 underline decoration-teal-300/30 underline-offset-2 hover:text-teal-100">
+            Fly to the preview
+          </button>
+        </div>
+      );
+    case 'seed':
+      return (
+        <div className="rounded-xl border border-white/8 bg-white/[0.02] p-2.5">
+          <div className="label mb-1.5">Insert order · parents first · mock data</div>
+          <div className="flex flex-wrap items-center gap-1">
+            {block.order.map((t, i) => (
+              <Fragment key={t}>
+                {i > 0 && <span className="text-slate-600">→</span>}
+                <TableChip name={t} suffix={`+${block.counts[t]}`} />
+              </Fragment>
+            ))}
+          </div>
+        </div>
+      );
+  }
+}
+
+const BY: Record<NonNullable<Message['tool']>['by'], string> = { model: 'chosen by the model', scripted: 'keyword match', chip: 'prompt chip' };
+
+function MessageView({ m }: { m: Message }) {
+  if (m.role === 'user') {
+    return (
+      <div className="rise flex justify-end">
+        <div className="max-w-[86%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-cyan-400/15 px-3.5 py-2 text-[14px] leading-relaxed text-slate-100">{m.text}</div>
+      </div>
+    );
+  }
+  const working = m.status === 'working';
+  return (
+    <div className="rise space-y-2">
+      {m.tool && (
+        <div className="flex items-center gap-2 text-[12px] text-slate-400">
+          {m.tool.done ? m.tool.ok ? <Check className="h-3.5 w-3.5 text-emerald-300" /> : <TriangleAlert className="h-3.5 w-3.5 text-amber-300" /> : <LoaderCircle className="h-3.5 w-3.5 animate-spin text-cyan-300" />}
+          <span className="font-mono text-slate-200">{m.tool.name}</span>
+          <span className="text-slate-500">· {m.tool.done ? BY[m.tool.by] : `${m.tool.label}…`}</span>
+        </div>
+      )}
+      {(m.text || working) && (
+        <div className={`space-y-2 text-[14px] leading-relaxed ${m.status === 'error' ? 'text-rose-200' : 'text-slate-300'}`}>
+          {m.text ? <Rich text={m.text} /> : !m.tool && <span className="text-slate-500">Thinking…</span>}
+          {working && m.text && <span className="blink inline-block h-3.5 w-1.5 translate-y-0.5 bg-cyan-300" aria-hidden />}
+        </div>
+      )}
+      {m.blocks.map((b, i) => (
+        <BlockView key={i} block={b} />
+      ))}
+      {m.status === 'stopped' && <div className="label">stopped</div>}
+      {m.status === 'done' && m.tokPerSec != null && <div className="label">{m.tokPerSec.toFixed(0)} tok/s · on this device</div>}
+    </div>
+  );
+}
+
+function Empty({ scripted, children }: { scripted: boolean; children: ReactNode }) {
+  return (
+    <div className="px-1 pt-2">
+      <div className="mb-3 grid h-11 w-11 place-items-center rounded-2xl border border-cyan-400/25 bg-cyan-400/10">
+        <Sparkles className="h-5 w-5 text-cyan-300" />
+      </div>
+      <h3 className="font-display text-lg font-semibold text-slate-50">Ask about this database</h3>
+      <p className="mt-1 text-[13.5px] leading-relaxed text-slate-400">
+        The architect acts on the 3D scene: it flies the camera, traces queries along the relationship lines, pins warnings on tables and previews refactors as ghost tables.
+      </p>
+      {scripted && (
+        <p className="mt-3 rounded-xl border border-amber-300/20 bg-amber-300/[0.06] p-3 text-[12.5px] leading-snug text-amber-100/90">
+          <strong className="font-semibold">Scripted mode.</strong> No model is loaded, so requests are matched by keyword and answers are templates. The prompts below work fully. For free-form questions, load a model from the top bar.
+        </p>
+      )}
+      <div className="mt-4">{children}</div>
+    </div>
+  );
+}
+
+export function AiDrawer({ phone }: { phone: boolean }) {
+  const open = useUi((s) => s.drawerOpen);
+  const setDrawer = useUi((s) => s.setDrawer);
+  const setModels = useUi((s) => s.setModels);
+  const messages = useChat((s) => s.messages);
+  const busy = useChat((s) => s.busy);
+  const schema = useScene((s) => s.schema);
+  const loaded = useEngine((s) => (s.status === 'ready' ? MODELS.find((m) => m.id === s.loadedId) : undefined));
+  const [draft, setDraft] = useState('');
+  const scroller = useRef<HTMLDivElement>(null);
+  const chips = useMemo(() => chipsFor(schema), [schema]);
+
+  useEffect(() => {
+    const el = scroller.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages]);
+
+  if (!open) return null;
+  const submit = () => {
+    if (busy || !draft.trim()) return;
+    void send(draft);
+    setDraft('');
+  };
+  const chipRow = (wrap: boolean) => (
+    <div className={wrap ? 'flex flex-wrap gap-2' : 'no-scrollbar -mx-3 flex gap-2 overflow-x-auto px-3'}>
+      {chips.map((c) => (
+        <button
+          key={c.label}
+          disabled={busy}
+          onClick={() => void send(c.label, c.call)}
+          className="h-9 shrink-0 rounded-full border border-cyan-400/25 bg-cyan-400/[0.07] px-3.5 text-[12.5px] font-medium text-cyan-100 hover:border-cyan-300/60 hover:bg-cyan-400/15 disabled:opacity-40"
+        >
+          {c.label}
+        </button>
+      ))}
+    </div>
+  );
+
+  return (
+    <section
+      aria-label="AI Architect"
+      className={`glass absolute z-30 flex flex-col overflow-hidden ${
+        phone ? 'inset-x-0 bottom-0 h-(--sheet-h) rounded-t-3xl !border-x-0 !border-b-0' : 'bottom-3 right-3 top-[62px] w-[calc(var(--drawer-w)-12px)] rounded-2xl'
+      }`}
+    >
+      {phone && <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-white/15" aria-hidden />}
+      <header className="flex shrink-0 items-center gap-2 border-b border-white/8 px-3.5 py-2.5">
+        <Sparkles className="h-4 w-4 shrink-0 text-cyan-300" aria-hidden />
+        <h2 className="font-display shrink-0 whitespace-nowrap text-[15px] font-semibold text-slate-50">AI Architect</h2>
+        <button onClick={() => setModels(true)} data-models-toggle className={`label ml-1 truncate rounded-full border px-2 py-0.5 ${loaded ? 'border-emerald-400/30 !text-emerald-300' : 'border-amber-300/30 !text-amber-200'}`}>
+          {loaded ? loaded.name : 'scripted · no model'}
+        </button>
+        <div className="flex-1" />
+        {messages.length > 0 && (
+          <button onClick={clearChat} disabled={busy} aria-label="Clear the conversation" title="Clear the conversation" className="grid h-9 w-9 place-items-center rounded-lg text-slate-400 hover:bg-white/5 hover:text-white disabled:opacity-30">
+            <Trash2 className="h-4 w-4" />
+          </button>
+        )}
+        <button onClick={() => setDrawer(false)} aria-label="Close the AI drawer" className="grid h-9 w-9 place-items-center rounded-lg text-slate-400 hover:bg-white/5 hover:text-white">
+          <X className="h-4 w-4" />
+        </button>
+      </header>
+
+      <div ref={scroller} className="thin-scroll min-h-0 flex-1 space-y-4 overflow-y-auto px-3.5 py-3.5" aria-live="polite">
+        {messages.length === 0 ? <Empty scripted={!loaded}>{chipRow(true)}</Empty> : messages.map((m) => <MessageView key={m.id} m={m} />)}
+      </div>
+
+      <footer className="shrink-0 space-y-2 border-t border-white/8 px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-2.5">
+        {messages.length > 0 && chipRow(false)}
+        <div className="flex items-end gap-2 rounded-2xl border border-white/10 bg-black/25 p-1.5 pl-3 focus-within:border-cyan-400/50">
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            rows={1}
+            placeholder={loaded ? 'Ask for a query, or paste one to trace' : 'Try “count orders per user”'}
+            aria-label="Message the AI architect"
+            className="max-h-32 min-h-9 flex-1 resize-none bg-transparent py-1.5 text-[14px] leading-snug text-slate-100 !outline-none placeholder:text-slate-500 [field-sizing:content]"
+          />
+          {busy ? (
+            <button onClick={stop} aria-label="Stop" className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/10 text-slate-100 hover:bg-white/15">
+              <Square className="h-3.5 w-3.5 fill-current" />
+            </button>
+          ) : (
+            <button onClick={submit} disabled={!draft.trim()} aria-label="Send" className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-cyan-400 text-slate-950 hover:bg-cyan-300 disabled:opacity-30">
+              <ArrowUp className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+      </footer>
+    </section>
+  );
+}

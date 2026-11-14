@@ -1,0 +1,7 @@
+node_modules
+dist
+dev-dist
+public/wllama
+.firebase
+.DS_Store
+coverage
