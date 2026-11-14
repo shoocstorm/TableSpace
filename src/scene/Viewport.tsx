@@ -1,9 +1,9 @@
 // The full-screen 3D view: the chosen environment (sky, fog, floor grid),
 // the active schema's tables and relationships, and whatever the agent has added.
 
-import { Canvas } from '@react-three/fiber';
+import { Canvas, useFrame } from '@react-three/fiber';
 import { Bloom, EffectComposer, Vignette } from '@react-three/postprocessing';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { litTables, positionsOf, selectTable, toggleExpanded, useScene } from '../state/scene';
 import { isMobileDevice, useEngine } from '../llm/engine';
 import { useUi } from '../state/ui';
@@ -11,7 +11,9 @@ import { usePhone, useReducedMotion } from '../ui/usePhone';
 import { Backdrop } from './Backdrop';
 import { CameraRig } from './CameraRig';
 import { environmentById } from './environments';
+import { topoOrder } from '../schema/graph';
 import { Ghosts } from './Ghosts';
+import { introOrder, replayAssembly, tickIntro } from './intro';
 import { resetLive } from './live';
 import { QueryPulses } from './QueryPulses';
 import { Relationships } from './Relationships';
@@ -33,6 +35,7 @@ function Scene({ phone, still }: { phone: boolean; still: boolean }) {
   const xray = useScene((s) => s.xray);
   const focus = useScene((s) => s.focus);
   const env = environmentById(useUi((s) => s.env));
+  const labels = useUi((s) => s.labels);
 
   const lit = useMemo(() => litTables({ xray, focus, selected, schema }), [xray, focus, selected, schema]);
   const litSet = useMemo(() => (lit ? new Set(lit) : null), [lit]);
@@ -40,6 +43,28 @@ function Scene({ phone, still }: { phone: boolean; still: boolean }) {
   const floor = useMemo(() => Math.min(...Object.values(layout).map((p) => p[1])) - 5, [layout]);
 
   useEffect(() => resetLive, [schema.id]);
+
+  // the scene builds itself when the app opens and when another database is opened: parents land before their children
+  const order = useMemo(() => topoOrder(schema), [schema]);
+  const opened = useRef(schema.id);
+  useEffect(() => {
+    introOrder(order);
+    if (opened.current !== schema.id) replayAssembly();
+    opened.current = schema.id;
+  }, [order, schema.id]);
+  useFrame(tickIntro);
+
+  // the columns at both ends of the selected table's relationships: their rows light up on the faces
+  const linked = useMemo(() => {
+    const sets = new Map<string, Set<string>>();
+    const add = (table: string, column: string) => void (sets.get(table) ?? sets.set(table, new Set()).get(table)!).add(column);
+    for (const e of edges) {
+      if (e.from !== selected && e.to !== selected) continue;
+      add(e.from, e.column);
+      add(e.to, e.refColumn);
+    }
+    return new Map([...sets].map(([table, columns]) => [table, [...columns].join('\n')]));
+  }, [edges, selected]);
 
   // the tables the trace has reached so far, colored by how they were read
   const accents = useMemo(() => {
@@ -72,10 +97,12 @@ function Scene({ phone, still }: { phone: boolean; still: boolean }) {
           dimmed={!!litSet && !litSet.has(t.name)}
           fill={fill[t.name]}
           accent={accents.get(t.name) ?? null}
+          linked={linked.get(t.name) ?? ''}
+          still={still}
           onSelect={onSelect}
         />
       ))}
-      <Relationships key={schema.id} schema={schema} edges={edges} lit={lit} selected={selected} light={phone} still={still} />
+      <Relationships key={schema.id} schema={schema} edges={edges} lit={lit} selected={selected} labels={labels} light={phone} still={still} />
       {trace && <QueryPulses key={trace.sql} steps={trace.steps} edges={edges} still={still} />}
       <Ghosts ghosts={ghosts} layout={layout} />
       <WarningBadges badges={badges} />

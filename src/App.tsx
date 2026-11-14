@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from 'react';
 import { autoload } from './llm/engine';
+import { useIntro } from './scene/intro';
 import { Viewport } from './scene/Viewport';
 import { audit } from './analysis/audit';
 import { send } from './state/chat';
@@ -12,6 +13,7 @@ import { CommandPalette } from './ui/CommandPalette';
 import { Dock } from './ui/Dock';
 import { ImportDialog } from './ui/ImportDialog';
 import { Inspector } from './ui/Inspector';
+import { Intro } from './ui/Intro';
 import { ResultDialog } from './ui/ResultDialog';
 import { TopBar } from './ui/TopBar';
 import { usePhone } from './ui/usePhone';
@@ -74,11 +76,12 @@ function Legend() {
       <span className="label mb-1 mt-2 pl-1.5">Relationships</span>
       <span className="flex items-center gap-2 pl-1.5 text-[12px] text-slate-400">
         <svg width="46" height="10" viewBox="0 0 46 10" aria-hidden>
-          <circle cx="4" cy="5" r="3" fill="#94a3b8" />
-          <path d="M7 5 H36" stroke="#94a3b8" strokeWidth="1.6" />
-          <path d="M35 1 L45 5 L35 9 Z" fill="#e2e8f0" />
+          <rect x="1" y="1.5" width="3" height="7" rx="1" fill="#67e8f9" />
+          <path d="M4 5 H35" stroke="#94a3b8" strokeWidth="1.6" />
+          <path d="M33 1.5 L42 5 L33 8.5 Z" fill="#e2e8f0" />
+          <rect x="42" y="1.5" width="3" height="7" rx="1" fill="#fbbf24" />
         </svg>
-        key column → table it references
+        foreign key → the key it references
       </span>
     </div>
   );
@@ -89,6 +92,7 @@ export default function App() {
   const drawerOpen = useUi((s) => s.drawerOpen);
   const setPalette = useUi((s) => s.setPalette);
   const selected = useScene((s) => s.selected);
+  const intro = useIntro((s) => s.phase);
 
   useEffect(() => {
     // a model used before loads again from the browser's cache; nothing is downloaded unasked
@@ -110,7 +114,7 @@ export default function App() {
   const stage = phone ? { bottom: drawerOpen ? 'var(--sheet-h)' : 0 } : { right: drawerOpen ? 'var(--drawer-w)' : 0 };
 
   return (
-    <div className="fixed inset-0 overflow-hidden bg-void">
+    <div className="fixed inset-0 overflow-hidden bg-void" data-intro={intro === 'off' ? undefined : intro}>
       <main className="absolute inset-0" style={stage}>
         <Viewport />
         {selected && !(phone && drawerOpen) && (
@@ -126,6 +130,7 @@ export default function App() {
       <CommandPalette />
       <ImportDialog />
       <ResultDialog />
+      <Intro />
     </div>
   );
 }

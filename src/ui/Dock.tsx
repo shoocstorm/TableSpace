@@ -1,8 +1,8 @@
 // The control dock under the scene: camera reset, X-ray, exploded view,
-// clearing the agent's ghost previews, the environment picker, and table search. Above it, a strip
+// line labels, clearing the agent's ghost previews, the environment picker, and table search. Above it, a strip
 // names whatever the agent has put in the scene, each with a way to dismiss it.
 
-import { Check, Expand, Ghost, Mountain, RotateCcw, ScanEye, Search, Shrink, X } from 'lucide-react';
+import { Check, Expand, Ghost, Mountain, RotateCcw, ScanEye, Search, Shrink, Tag, X } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { ENVIRONMENTS } from '../scene/environments';
 import { clearBadges, clearFocus, clearGhosts, clearTrace, clearWhatIf, resetView, toggleExploded, toggleXray, useScene } from '../state/scene';
@@ -95,6 +95,8 @@ export function Dock() {
   const selected = useScene((s) => s.selected);
   const whatIf = useScene((s) => s.whatIf.length);
   const setPalette = useUi((s) => s.setPalette);
+  const labels = useUi((s) => s.labels);
+  const toggleLabels = useUi((s) => s.toggleLabels);
   const xrayIdle = xray && !focusLabel && !selected;
 
   return (
@@ -140,6 +142,9 @@ export function Dock() {
         </DockButton>
         <DockButton label={exploded ? 'Collapse' : 'Explode'} hint="pull the domains apart" active={exploded} onClick={toggleExploded}>
           {exploded ? <Shrink className="h-[18px] w-[18px]" /> : <Expand className="h-[18px] w-[18px]" />}
+        </DockButton>
+        <DockButton label="Labels" hint="name each relationship on its line" active={labels} onClick={toggleLabels}>
+          <Tag className="h-[18px] w-[18px]" />
         </DockButton>
         <DockButton label={ghosts ? `Ghosts ${ghosts}` : 'Ghosts'} hint="clear the AI's ghost previews" disabled={!ghosts} onClick={clearGhosts}>
           <Ghost className="h-[18px] w-[18px]" />

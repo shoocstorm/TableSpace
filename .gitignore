@@ -5,3 +5,4 @@ public/wllama
 .firebase
 .DS_Store
 coverage
+firebase-debug.log

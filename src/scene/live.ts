@@ -5,7 +5,7 @@
 
 import { CubicBezierCurve3, Vector3 } from 'three';
 
-export type LiveTable = { pos: Vector3; height: number; expanded: boolean; dim: number };
+export type LiveTable = { pos: Vector3; height: number; depth: number; expanded: boolean; dim: number };
 
 export const live = {
   tables: new Map<string, LiveTable>(),

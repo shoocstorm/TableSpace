@@ -1,4 +1,4 @@
-// Which panels are open. The drawer's state is remembered across visits.
+// Which panels are open, and how the scene is shown. The drawer's state, the environment and the line labels are remembered across visits.
 
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
@@ -20,6 +20,9 @@ type UiState = {
   /** The id of the 3D environment (see scene/environments). */
   env: string;
   setEnv: (env: string) => void;
+  /** Whether relationship lines carry their labels. Off unless asked for: the faces and the line ends already say what joins what. */
+  labels: boolean;
+  toggleLabels: () => void;
 };
 
 const startsOnPhone = typeof window !== 'undefined' && !!window.matchMedia?.(PHONE_QUERY).matches;
@@ -40,7 +43,9 @@ export const useUi = create<UiState>()(
       setResult: (result) => set({ result }),
       env: 'space',
       setEnv: (env) => set({ env }),
+      labels: false,
+      toggleLabels: () => set((s) => ({ labels: !s.labels })),
     }),
-    { name: 'tablespace.ui', storage: createJSONStorage(() => localStorage), partialize: (s) => ({ drawerOpen: s.drawerOpen, env: s.env }) },
+    { name: 'tablespace.ui', storage: createJSONStorage(() => localStorage), partialize: (s) => ({ drawerOpen: s.drawerOpen, env: s.env, labels: s.labels }) },
   ),
 );
