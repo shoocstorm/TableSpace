@@ -3,7 +3,7 @@
 import { create } from 'zustand';
 import { isAbort, type ChatMessage } from '../llm/engine';
 import { runTurn, type Chooser } from '../agent/run';
-import type { Block, ToolCall, ToolName } from '../agent/tools';
+import type { Block, Suggestion, ToolCall, ToolName } from '../agent/tools';
 
 export type Message = {
   id: number;
@@ -12,6 +12,8 @@ export type Message = {
   /** The tool this answer ran, and who chose it. */
   tool?: { name: ToolName; label: string; by: Chooser; done: boolean; ok: boolean };
   blocks: Block[];
+  /** One-click follow-ups the tool suggested. */
+  next?: Suggestion[];
   status: 'working' | 'done' | 'stopped' | 'error';
   tokPerSec?: number | null;
 };
@@ -43,7 +45,7 @@ export async function send(text: string, direct?: ToolCall): Promise<void> {
   try {
     await runTurn({ text: trimmed, direct, history, signal: controller.signal }, (u) => {
       if (u.type === 'tool') patch(id, { tool: { name: u.tool, label: u.label, by: u.by, done: false, ok: true } });
-      else if (u.type === 'result') patch(id, (m) => ({ blocks: u.blocks, tool: m.tool && { ...m.tool, done: true, ok: u.ok } }));
+      else if (u.type === 'result') patch(id, (m) => ({ blocks: u.blocks, next: u.next, tool: m.tool && { ...m.tool, done: true, ok: u.ok } }));
       else if (u.type === 'text') patch(id, { text: u.text });
       else patch(id, { tokPerSec: u.tokPerSec });
     });

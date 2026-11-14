@@ -11,6 +11,7 @@ const has = (text: string, re: RegExp) => re.test(text);
 export function route(schema: SchemaDef, text: string): ToolCall | null {
   const t = text.toLowerCase();
   if (looksLikeSql(text)) return { tool: 'trace_query', args: { preset: schema.presets[0]?.id } };
+  if (has(t, /\b(what if|add|create|try|put)\b.*\bindex(es|ed)?\b|\bindex(ed)?\b.*\b(on|were|was)\b/)) return { tool: 'what_if_index', args: { columns: [] } };
   if (has(t, /\b(audit|index(es)?|anti.?patterns?|orphan(ed)?|god tables?|health|radar|problems?|smells?|issues? with|unused|nobody uses|not used)\b/)) {
     const rule = has(t, /orphan|unused|nobody uses|not used/) ? 'orphaned_table' : has(t, /god/) ? 'god_table' : has(t, /index/) ? 'missing_fk_index' : 'all';
     return { tool: 'audit_schema', args: { rule } };

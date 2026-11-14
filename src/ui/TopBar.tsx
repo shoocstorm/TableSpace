@@ -5,7 +5,7 @@ import { ChevronDown, Cpu, Database, Download, LoaderCircle, Sparkles, Trash2, T
 import { useEffect, useRef } from 'react';
 import { evictModel, isMobileDevice, loadModel, MODELS, plannedLoad, unloadModel, useEngine } from '../llm/engine';
 import { planText } from '../llm/device';
-import { SCHEMAS } from '../schema/registry';
+import { BUILT_IN, useRegistry } from '../schema/registry';
 import { setSchema, useScene } from '../state/scene';
 import { useUi } from '../state/ui';
 
@@ -25,19 +25,31 @@ function Logo() {
   );
 }
 
+const IMPORT = '__import__';
+
 function SchemaSwitcher() {
   const id = useScene((s) => s.schema.id);
   const engine = useScene((s) => s.schema.engine);
+  const imported = useRegistry((s) => s.imported);
+  const setImport = useUi((s) => s.setImport);
   return (
     <label className="glass relative flex h-10 min-w-0 items-center gap-2 rounded-xl pl-3 pr-2">
       <Database className="h-4 w-4 shrink-0 text-cyan-300" aria-hidden />
       <span className="sr-only">Database</span>
-      <select value={id} onChange={(e) => setSchema(e.target.value)} className="min-w-0 cursor-pointer appearance-none truncate bg-transparent pr-6 text-sm font-semibold text-slate-100 outline-none" title={engine}>
-        {SCHEMAS.map((s) => (
+      <select value={id} onChange={(e) => (e.target.value === IMPORT ? setImport(true) : setSchema(e.target.value))} className="min-w-0 cursor-pointer appearance-none truncate bg-transparent pr-6 text-sm font-semibold text-slate-100 outline-none" title={engine}>
+        {BUILT_IN.map((s) => (
           <option key={s.id} value={s.id} className="bg-slate-900">
             {s.name}
           </option>
         ))}
+        {imported.map((s) => (
+          <option key={s.id} value={s.id} className="bg-slate-900">
+            {s.name} · imported
+          </option>
+        ))}
+        <option value={IMPORT} className="bg-slate-900">
+          ＋ Import your schema…
+        </option>
       </select>
       <ChevronDown className="pointer-events-none absolute right-2 h-4 w-4 text-slate-500" aria-hidden />
     </label>

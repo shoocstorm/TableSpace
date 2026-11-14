@@ -76,6 +76,7 @@ describe('reading a request', () => {
   it('does not take ordinary words for values', () => {
     expect(ask('show the status and currency of orders').sql).not.toContain('WHERE');
     expect(inferSpec(ecommerce, 'hello', [])).toBeNull();
+    expect(explainSpec(ecommerce, inferSpec(ecommerce, 'top 5 brands by number of products', ['brands', 'products'])!)).toBe('Returns the number of products rows, for each brands.name, highest first, limited to 5.');
   });
   it('explains what it understood', () => {
     const spec = inferSpec(ecommerce, 'how many orders per user', ['orders', 'users'])!;

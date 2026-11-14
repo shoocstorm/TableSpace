@@ -38,6 +38,7 @@ export function pickToolMessages(schema: SchemaDef, tools: Tool[], userText: str
     'are any tables unused, or missing indexes? -> audit_schema',
     'why is a query or page slow? -> trace_query',
     'this table is too wide -> propose_refactor',
+    'what if this column had an index? -> what_if_index',
     'add some test data -> seed_data',
     'what is a foreign key? -> answer',
     '',

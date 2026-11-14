@@ -13,14 +13,14 @@ import { useScene } from '../state/scene';
 import { choiceGrammar, schemaGrammar, validate, type ObjectSchema } from './grammar';
 import { ANSWER, answerMessages, fillArgsMessages, narrateMessages, pickToolMessages, stripThink } from './prompt';
 import { route, SCRIPTED_HELP } from './router';
-import { TOOLS, toolByName, type Block, type ToolCall, type ToolName } from './tools';
+import { TOOLS, toolByName, type Block, type Suggestion, type ToolCall, type ToolName } from './tools';
 
 /** Who chose the tool: the model, the keyword router, or a prompt chip that names it outright. */
 export type Chooser = 'model' | 'scripted' | 'chip';
 
 export type TurnUpdate =
   | { type: 'tool'; tool: ToolName; label: string; by: Chooser; args: Record<string, unknown> }
-  | { type: 'result'; ok: boolean; blocks: Block[] }
+  | { type: 'result'; ok: boolean; blocks: Block[]; next: Suggestion[] }
   | { type: 'text'; text: string }
   | { type: 'stats'; tokPerSec: number | null };
 
@@ -90,7 +90,7 @@ export async function runTurn(input: TurnInput, onUpdate: (u: TurnUpdate) => voi
       }
     : undefined;
   const result = await tool.run(call.args, { schema, userText: direct && !direct.useText ? '' : text, fill });
-  onUpdate({ type: 'result', ok: result.ok, blocks: result.blocks });
+  onUpdate({ type: 'result', ok: result.ok, blocks: result.blocks, next: result.next ?? [] });
   if (signal.aborted) return onUpdate({ type: 'text', text: result.text });
 
   if (!hasModel()) return onUpdate({ type: 'text', text: result.text });

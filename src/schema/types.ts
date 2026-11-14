@@ -14,7 +14,7 @@ export type Column = {
 
 export type ForeignKey = { column: string; refTable: string; refColumn: string };
 
-export type Index = { name: string; columns: string[]; unique?: boolean };
+export type Index = { name: string; columns: string[]; unique?: boolean; /** Not in the database: a "what if" index being tried out. */ whatIf?: boolean };
 
 export type Table = {
   name: string;

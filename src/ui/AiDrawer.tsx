@@ -2,9 +2,10 @@
 // a panel on the right; on a phone a sheet over the lower part of the screen,
 // so the scene it controls stays visible above it.
 
-import { ArrowUp, Check, Copy, LoaderCircle, Play, Sparkles, Square, Trash2, TriangleAlert, X } from 'lucide-react';
+import { ArrowUp, Check, Copy, CornerDownRight, LoaderCircle, Maximize2, Play, Sparkles, Square, Trash2, TriangleAlert, X } from 'lucide-react';
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { RULE_LABEL } from '../analysis/audit';
+import type { PlanStep } from '../analysis/plan';
 import type { Block, ToolCall } from '../agent/tools';
 import { MODELS, useEngine } from '../llm/engine';
 import { edgesOf, formatRows } from '../schema/graph';
@@ -95,6 +96,7 @@ function TableChip({ name, suffix }: { name: string; suffix?: string }) {
 }
 
 function BlockView({ block }: { block: Block }) {
+  const setResult = useUi((s) => s.setResult);
   const activeSql = useScene((s) => s.trace?.sql);
   const traceStep = useScene((s) => s.traceStep);
   switch (block.kind) {
@@ -116,6 +118,96 @@ function BlockView({ block }: { block: Block }) {
           </ul>
         </div>
       );
+    case 'result': {
+      const { columns, rows, total, scanned } = block.result;
+      const shown = rows.slice(0, 8);
+      const open = () => setResult({ result: block.result, sql: block.sql });
+      return (
+        <div className="overflow-hidden rounded-xl border border-white/8 bg-white/[0.02]">
+          <div className="flex items-center justify-between gap-2 pl-2.5 pr-1 pt-1">
+            <span className="label">Result · mock data</span>
+            <span className="flex min-w-0 items-center gap-1 font-mono text-[11px] text-slate-500">
+              <span className="truncate">
+                {total.toLocaleString('en-US')} row{total === 1 ? '' : 's'} · {scanned.toLocaleString('en-US')} read
+              </span>
+              {rows.length > 0 && (
+                <button onClick={open} title="Open the result as a table: sort, filter, export" className="ml-1 flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-cyan-400/30 bg-cyan-400/[0.07] px-2 font-sans text-[12px] font-medium text-cyan-100 hover:border-cyan-300/60 hover:bg-cyan-400/15">
+                  <Maximize2 className="h-3.5 w-3.5" /> Open table
+                </button>
+              )}
+            </span>
+          </div>
+          {rows.length ? (
+            <div className="thin-scroll mt-1 cursor-pointer overflow-x-auto" onClick={open} title="Open the result as a table">
+              <table className="w-max min-w-full font-mono text-[11.5px]">
+                <thead>
+                  <tr className="border-y border-white/8 bg-white/[0.03] text-left text-slate-400">
+                    {columns.map((c, i) => (
+                      <th key={i} className="px-2.5 py-1.5 font-medium">
+                        {c}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {shown.map((r, i) => (
+                    <tr key={i} className="border-b border-white/5 text-slate-200 last:border-0">
+                      {r.map((v, j) => (
+                        <td key={j} className={`max-w-[190px] truncate px-2.5 py-1 ${typeof v === 'number' ? 'text-right text-cyan-100' : ''}`}>
+                          {v === null ? <span className="text-slate-600">null</span> : typeof v === 'number' ? v.toLocaleString('en-US') : String(v)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="px-2.5 py-2 text-[12.5px] text-slate-400">No rows match in the mock data.</p>
+          )}
+          <p className="border-t border-white/8 px-2.5 py-1.5 text-[11.5px] leading-snug text-slate-500">
+            {rows.length > shown.length && (
+              <button onClick={open} className="mr-1 text-cyan-300 underline decoration-cyan-300/30 underline-offset-2 hover:text-cyan-100">
+                First {shown.length} of {rows.length} — see all
+              </button>
+            )}
+            Run in the browser on invented rows, to show the query's shape — not your data.
+          </p>
+        </div>
+      );
+    }
+    case 'whatif': {
+      const sum = (steps: PlanStep[]) => steps.reduce((n, s) => n + s.rowsRead, 0);
+      return (
+        <div className="rounded-xl border border-teal-300/25 bg-teal-300/[0.04] p-2.5">
+          <div className="label mb-1.5 !text-teal-300">What-if · nothing changed in the database</div>
+          {block.before && block.after ? (
+            <div className="grid grid-cols-2 gap-2">
+              {([['Before', block.before], ['With the index', block.after]] as const).map(([title, steps]) => (
+                <div key={title} className="rounded-lg bg-black/25 p-2">
+                  <div className="label">{title}</div>
+                  <div className="font-display text-lg font-semibold text-slate-50">~{formatRows(sum(steps))}</div>
+                  <div className="text-[11.5px] text-slate-400">rows read</div>
+                  <div className="mt-1.5 flex gap-1">
+                    {steps.map((s, i) => (
+                      <span key={i} title={`${s.table}: ${s.note}`} className="h-1.5 flex-1 rounded-full" style={{ background: scanColor(s) }} />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[12.5px] leading-snug text-slate-300">Trace a query to see what the index changes in its plan.</p>
+          )}
+          {block.resolved > 0 && (
+            <p className="mt-2 text-[12.5px] text-slate-300">
+              {block.resolved} audit finding{block.resolved === 1 ? '' : 's'} would be resolved.
+            </p>
+          )}
+          <pre className="thin-scroll mt-2 overflow-auto rounded-lg bg-black/30 p-2 font-mono text-[11.5px] leading-relaxed text-slate-300">{block.sql}</pre>
+        </div>
+      );
+    }
     case 'tables':
       return (
         <div className="flex flex-wrap gap-1.5">
@@ -219,7 +311,7 @@ function BlockView({ block }: { block: Block }) {
 
 const BY: Record<NonNullable<Message['tool']>['by'], string> = { model: 'chosen by the model', scripted: 'keyword match', chip: 'prompt chip' };
 
-function MessageView({ m }: { m: Message }) {
+function MessageView({ m, last, busy }: { m: Message; last: boolean; busy: boolean }) {
   if (m.role === 'user') {
     return (
       <div className="rise flex justify-end">
@@ -246,6 +338,16 @@ function MessageView({ m }: { m: Message }) {
       {m.blocks.map((b, i) => (
         <BlockView key={i} block={b} />
       ))}
+      {last && !busy && m.next && m.next.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 pt-0.5">
+          {m.next.map((n) => (
+            <button key={n.label} onClick={() => void send(n.label, n.call)} className="flex min-h-8 items-center gap-1.5 rounded-full border border-violet-300/30 bg-violet-400/[0.08] px-3 py-1 text-left text-[12.5px] font-medium text-violet-100 hover:border-violet-200/60 hover:bg-violet-400/15">
+              <CornerDownRight className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              {n.label}
+            </button>
+          ))}
+        </div>
+      )}
       {m.status === 'stopped' && <div className="label">stopped</div>}
       {m.status === 'done' && m.tokPerSec != null && <div className="label">{m.tokPerSec.toFixed(0)} tok/s · on this device</div>}
     </div>
@@ -336,7 +438,7 @@ export function AiDrawer({ phone }: { phone: boolean }) {
       </header>
 
       <div ref={scroller} className="thin-scroll min-h-0 flex-1 space-y-4 overflow-y-auto px-3.5 py-3.5" aria-live="polite">
-        {messages.length === 0 ? <Empty scripted={!loaded}>{chipRow(true)}</Empty> : messages.map((m) => <MessageView key={m.id} m={m} />)}
+        {messages.length === 0 ? <Empty scripted={!loaded}>{chipRow(true)}</Empty> : messages.map((m, i) => <MessageView key={m.id} m={m} last={i === messages.length - 1} busy={busy} />)}
       </div>
 
       <footer className="shrink-0 space-y-2 border-t border-white/8 px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-2.5">
@@ -352,7 +454,7 @@ export function AiDrawer({ phone }: { phone: boolean }) {
               }
             }}
             rows={1}
-            placeholder={loaded ? 'Ask for a query, or paste one to trace' : 'Try “count orders per user”'}
+            placeholder={loaded ? 'Ask for a query, or paste one to trace' : 'Try “audit the schema”, or ask for a query'}
             aria-label="Message the AI architect"
             className="max-h-32 min-h-9 flex-1 resize-none bg-transparent py-1.5 text-[14px] leading-snug text-slate-100 !outline-none placeholder:text-slate-500 [field-sizing:content]"
           />

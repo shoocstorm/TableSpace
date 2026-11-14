@@ -4,7 +4,7 @@
 
 import { Expand, Ghost, RotateCcw, ScanEye, Search, Shrink, X } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { clearBadges, clearFocus, clearGhosts, clearTrace, resetView, toggleExploded, toggleXray, useScene } from '../state/scene';
+import { clearBadges, clearFocus, clearGhosts, clearTrace, clearWhatIf, resetView, toggleExploded, toggleXray, useScene } from '../state/scene';
 import { useUi } from '../state/ui';
 import { shortcut } from './usePhone';
 
@@ -47,6 +47,7 @@ export function Dock() {
   const focusLabel = useScene((s) => s.focusLabel);
   const seeding = useScene((s) => s.seeding);
   const selected = useScene((s) => s.selected);
+  const whatIf = useScene((s) => s.whatIf.length);
   const setPalette = useUi((s) => s.setPalette);
   const xrayIdle = xray && !focusLabel && !selected;
 
@@ -72,6 +73,11 @@ export function Dock() {
         {findings > 0 && (
           <Pill color="#fbbf24" onDismiss={clearBadges} label="Remove the warning badges">
             {findings} warning{findings === 1 ? '' : 's'}
+          </Pill>
+        )}
+        {whatIf > 0 && (
+          <Pill color="#5eead4" onDismiss={clearWhatIf} label="Remove the what-if indexes">
+            {whatIf} what-if index{whatIf === 1 ? '' : 'es'}
           </Pill>
         )}
         {xrayIdle && <span className="glass flex h-8 items-center rounded-full px-3 text-[12px] text-slate-300">X-ray is on — select a table to isolate what it depends on</span>}

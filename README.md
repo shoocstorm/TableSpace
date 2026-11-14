@@ -64,6 +64,18 @@ Limits: one SELECT with inner joins, AND-ed filters, one aggregate. No OR, subqu
 
 Models: Qwen3 0.6B (639 MB) and Qwen3 1.7B (1.1 GB), GGUF files downloaded once from Hugging Face at a pinned commit, verified against a pinned sha256, and kept in the browser's OPFS storage.
 
+### The result table
+
+A generated query is run on the mock rows, and the chat shows its first rows. **Open table** (or a click on that preview) opens the whole result in a dialog:
+
+- click a column header to sort (again to reverse, a third time to clear); nulls stay last
+- search every column, or filter one: plain text means "contains", and `=x`, `!=x`, `>x`, `>=x`, `<x`, `<=x`, `10..50`, `null`, `!null` also work
+- hide columns, page through 25 / 50 / 100 / all rows, click a row to see every value in full
+- the bottom row totals and averages measure columns and counts distinct values in the others
+- **Copy** puts the rows shown on the clipboard tab-separated (pastes into a spreadsheet); **CSV** and **JSON** download them
+
+The dialog works on what the query returned (at most its `LIMIT`), and exports follow the current filters, order and visible columns. The logic is in `src/analysis/resultview.ts`.
+
 ## Add a database
 
 1. Copy `src/schema/saas.ts` and describe your tables with the `pk` / `col` / `fk` / `idx` helpers. Each table needs a `domain` (for color and clustering) and a `rows` estimate (for size).

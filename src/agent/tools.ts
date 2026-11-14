@@ -6,16 +6,17 @@
 import { audit, AUDIT_RULES, RULE_LABEL, type AuditRule, type Finding } from '../analysis/audit';
 import { bloatedTables, proposeRefactor, STRATEGIES, type GhostTable, type Strategy } from '../analysis/normalize';
 import { simulatePlan, type PlanStep } from '../analysis/plan';
-import { AGGREGATES, compileQuery, explainSpec, gateSpec, inferSpec, mergeSpecs, OPS, repairSpec, valueCandidates, type Aggregate, type Check, type Op, type QuerySpec } from '../analysis/querybuilder';
+import { AGGREGATES, compileQuery, explainSpec, gateSpec, inferSpec, mentionedColumns, mergeSpecs, OPS, repairSpec, valueCandidates, type Aggregate, type Check, type Op, type QuerySpec } from '../analysis/querybuilder';
+import { executeSpec, type ResultSet } from '../analysis/execute';
 import { SEED_SIZES, type SeedSize } from '../analysis/seed';
 import { extractSql, parseQuery } from '../analysis/sql';
 import { formatRows, neighbours, tablesOfDomain } from '../schema/graph';
 import type { SchemaDef } from '../schema/types';
 import { ghostPositions } from '../scene/Ghosts';
-import { clearBadges, clearGhosts, focusTables, positionsOf, resetView, seedTables, showFindings, showGhosts, startTrace, useScene } from '../state/scene';
+import { addWhatIf, clearBadges, clearGhosts, clearWhatIf, focusTables, mockData, positionsOf, resetView, seedTables, showFindings, showGhosts, startTrace, useScene, type WhatIf } from '../state/scene';
 import type { ObjectSchema } from './grammar';
 
-export type ToolName = 'focus_tables' | 'write_sql' | 'trace_query' | 'propose_refactor' | 'audit_schema' | 'seed_data' | 'reset_view';
+export type ToolName = 'focus_tables' | 'write_sql' | 'what_if_index' | 'trace_query' | 'propose_refactor' | 'audit_schema' | 'seed_data' | 'reset_view';
 export type ToolCall = { tool: ToolName; args: Record<string, unknown>; /** A prompt chip whose own text is the request (the tool reads it). */ useText?: boolean };
 
 /** Structured results the chat drawer renders under the answer. */
@@ -25,6 +26,8 @@ export type Block =
   | { kind: 'ghosts'; table: string; ghosts: GhostTable[]; before: number; after: number }
   | { kind: 'sql'; title: string; sql: string }
   | { kind: 'checks'; understood: string; checks: Check[] }
+  | { kind: 'result'; result: ResultSet; sql?: string }
+  | { kind: 'whatif'; added: WhatIf[]; before: PlanStep[] | null; after: PlanStep[] | null; resolved: number; sql: string }
   | { kind: 'seed'; order: string[]; counts: Record<string, number>; total: number }
   | { kind: 'tables'; label: string; tables: string[] };
 
@@ -35,7 +38,15 @@ export type ToolResult = {
   /** The answer shown when no model is loaded (scripted mode). */
   text: string;
   blocks: Block[];
+  /** What would be worth doing next, offered as one-click follow-ups. */
+  next?: Suggestion[];
 };
+
+export type Suggestion = { label: string; call: ToolCall };
+
+const tryIndex = (table: string, column: string): Suggestion => ({ label: `What if ${table}.${column} were indexed?`, call: { tool: 'what_if_index', args: { columns: [`${table}.${column}`] } } });
+/** Up to two slow steps of a plan that an index would fix. */
+const indexIdeas = (steps: PlanStep[]): Suggestion[] => steps.filter((s) => s.slow && s.via).slice(0, 2).map((s) => tryIndex(s.table, s.via!));
 
 export type Tool = {
   name: ToolName;
@@ -159,12 +170,21 @@ export const TOOLS: Tool[] = [
       const parsed = parseQuery(out.sql);
       const planned = parsed.ok ? simulatePlan(schema, parsed.query) : null;
       let planFacts = '';
+      let resultFacts = '';
+      let next: Suggestion[] = [];
       if (planned?.ok) {
         const { steps } = planned.plan;
         checks.push({ ok: true, text: `Read back and planned: ${steps.length} step${steps.length === 1 ? '' : 's'}, the same tables in the same order.` });
         for (const s of steps.filter((x) => x.slow)) checks.push({ ok: false, text: `${s.table} would be read in full (${formatRows(s.rowsRead)} rows): ${s.note}.` });
         startTrace({ label: 'generated query', sql: out.sql, steps });
-        blocks.push({ kind: 'checks', understood, checks }, { kind: 'plan', label: 'generated query', sql: out.sql, steps });
+        blocks.push({ kind: 'checks', understood, checks });
+        const ran = executeSpec(schema, spec, mockData());
+        if (ran.ok) {
+          blocks.push({ kind: 'result', result: ran.result, sql: out.sql });
+          resultFacts = `\nRun on mock data: ${ran.result.total} row${ran.result.total === 1 ? '' : 's'}${ran.result.rows[0] ? `; first row: ${ran.result.columns.map((c, i) => `${c}=${ran.result.rows[0][i]}`).join(', ')}` : ''}. These are invented rows, not real data.`;
+        }
+        blocks.push({ kind: 'plan', label: 'generated query', sql: out.sql, steps });
+        next = indexIdeas(steps);
         planFacts = `\nSimulated plan: ${steps.map((s) => `${s.table} (${s.scan === 'index' ? 'index scan' : s.slow ? 'slow sequential scan' : 'sequential scan'})`).join(' → ')}.`;
       } else {
         checks.push({ ok: false, text: 'The query could not be read back for a plan, so it was not traced.' });
@@ -174,9 +194,43 @@ export const TOOLS: Tool[] = [
       const cautions = checks.filter((c) => !c.ok);
       return {
         ok: true,
-        facts: `SQL was generated and is shown to the user. In words: ${understood}\nTables: ${out.tables.join(', ')}. ${out.joins.length ? `Joined on foreign keys (${out.joins.length} join${out.joins.length === 1 ? '' : 's'}).` : 'No joins.'}${planFacts}${cautions.length ? `\nThings to check: ${cautions.map((c) => c.text).join(' ')}` : ''}`,
+        facts: `SQL was generated and is shown to the user. In words: ${understood}\nTables: ${out.tables.join(', ')}. ${out.joins.length ? `Joined on foreign keys (${out.joins.length} join${out.joins.length === 1 ? '' : 's'}).` : 'No joins.'}${planFacts}${resultFacts}${cautions.length ? `\nThings to check: ${cautions.map((c) => c.text).join(' ')}` : ''}`,
         text: `Here is the query. **${understood}** It uses ${out.tables.length === 1 ? `\`${out.tables[0]}\`` : `${out.tables.length} tables joined on their foreign keys`}.${cautions.length ? ` ${cautions.length === 1 ? 'One thing' : `${cautions.length} things`} to check below.` : ''}`,
         blocks,
+        next,
+      };
+    },
+  },
+  {
+    name: 'what_if_index',
+    label: 'Trying an index',
+    description: 'Add, create or try an index on a column (what if it were indexed?): re-plans the traced query and re-runs the audit with the index in place, without changing the database.',
+    schema: (s) => ({ type: 'object', properties: { columns: { type: 'array', items: { type: 'string', enum: s.tables.flatMap((t) => t.columns.filter((c) => !c.pk).map((c) => `${t.name}.${c.name}`)) }, maxItems: 4, description: 'the columns to index, as table.column' } }, required: ['columns'] }),
+    run: (args, { schema, userText }) => {
+      // columns written in the request are certain; then the model's; then every foreign key the audit says lacks one
+      const saidTables = mentionedTables(schema, userText);
+      const said = saidTables.length ? mentionedColumns(schema, saidTables, userText) : [];
+      const missing = () => audit(schema, ['missing_fk_index']).map((f) => `${f.table}.${f.column}`);
+      const refs = said.length ? said : ((args.columns as string[] | undefined)?.length ? (args.columns as string[]) : saidTables.length ? missing().filter((r) => saidTables.includes(r.split('.')[0])) : missing());
+      const before = useScene.getState().trace?.steps ?? null;
+      const findingsBefore = useScene.getState().findings.length;
+      const added = addWhatIf(refs.map((r) => ({ table: r.slice(0, r.indexOf('.')), column: r.slice(r.indexOf('.') + 1) })));
+      if (!added.length) {
+        return { ok: false, facts: refs.length ? `${refs.join(', ')} already ${refs.length === 1 ? 'has' : 'have'} an index, so nothing changed.` : 'No column to index was named, and no foreign key is missing an index.', text: refs.length ? `${refs.map((r) => `\`${r}\``).join(', ')} ${refs.length === 1 ? 'is' : 'are'} already indexed, so there is nothing to try.` : 'Tell me which column to index, for example *what if payments.order_id were indexed?*', blocks: [] };
+      }
+      const s = useScene.getState();
+      const after = s.trace?.steps ?? null;
+      const resolved = Math.max(0, findingsBefore - s.findings.length);
+      if (!s.trace) focusTables([...new Set(added.map((a) => a.table))], 'What-if index');
+      const sum = (steps: PlanStep[]) => steps.reduce((n, x) => n + x.rowsRead, 0);
+      const planFact = before && after ? ` The traced query now reads about ${formatRows(sum(after))} rows instead of ${formatRows(sum(before))}; slow scans went from ${before.filter((x) => x.slow).length} to ${after.filter((x) => x.slow).length}.` : '';
+      const sql = added.map((a) => `CREATE INDEX CONCURRENTLY ${a.table}_${a.column}_idx ON ${a.table} (${a.column});`).join('\n');
+      return {
+        ok: true,
+        facts: `What-if: ${added.length} index${added.length === 1 ? '' : 'es'} tried out on ${added.map((a) => `${a.table}.${a.column}`).join(', ')}. Nothing in the database changed.${planFact}${resolved ? ` ${resolved} audit finding${resolved === 1 ? '' : 's'} would be resolved.` : ''} An index also costs disk space and slows writes to the table a little.`,
+        text: `Trying ${added.length === 1 ? 'an index' : `${added.length} indexes`} on ${added.map((a) => `\`${a.table}.${a.column}\``).join(', ')} — a what-if, nothing in the database changed.${planFact}${resolved ? ` ${resolved} audit finding${resolved === 1 ? '' : 's'} would be resolved.` : ''}`,
+        blocks: [{ kind: 'whatif', added, before, after, resolved, sql }],
+        next: [{ label: 'Run the full audit', call: { tool: 'audit_schema', args: { rule: 'all' } } }],
       };
     },
   },
@@ -184,10 +238,11 @@ export const TOOLS: Tool[] = [
     name: 'trace_query',
     label: 'Tracing the query',
     description: 'Simulate, trace, explain or run a SQL query or a named flow (like checkout): animates its join order across the tables and marks slow scans red.',
-    schema: (s) => ({ type: 'object', properties: { preset: { type: 'string', enum: s.presets.map((p) => p.id), description: 'the named query closest to the request' } }, required: ['preset'] }),
+    schema: (s) => ({ type: 'object', properties: { preset: { type: 'string', enum: s.presets.length ? s.presets.map((p) => p.id) : ['none'], description: 'the named query closest to the request' } }, required: ['preset'] }),
     run: (args, { schema, userText }) => {
       const typed = extractSql(userText);
       const preset = schema.presets.find((p) => p.id === args.preset) ?? schema.presets[0];
+      if (!typed && !preset) return { ok: false, facts: 'There is no query to trace: none was given and this schema has no named queries.', text: 'Paste a `SELECT … JOIN …` query and I will trace it. This schema has no relationships to build one from.', blocks: [] };
       const sql = typed ?? preset.sql;
       const label = typed ? 'your query' : preset.label;
       const parsed = parseQuery(sql);
@@ -206,6 +261,7 @@ export const TOOLS: Tool[] = [
           ? `Tracing **${label}** across ${steps.length} tables. ${slow.length === 1 ? 'One step turns' : `${slow.length} steps turn`} red: ${slow.map((s) => `**${s.table}** is read in full (${formatRows(s.rowsRead)} rows) because ${s.via ? `\`${s.via}\` has no index` : 'nothing filters it'}`).join('; ')}.`
           : `Tracing **${label}** across ${steps.length} tables. Every step uses an index — no slow scans.`,
         blocks: [{ kind: 'plan', label, sql, steps }, ...(fixes.length ? [{ kind: 'sql' as const, title: 'Suggested fix', sql: fixes.join('\n') }] : [])],
+        next: indexIdeas(steps),
       };
     },
   },
@@ -247,7 +303,7 @@ export const TOOLS: Tool[] = [
     run: (args, { schema }) => {
       const rule = (args.rule as string) ?? 'all';
       const findings = audit(schema, rule === 'all' ? AUDIT_RULES : [rule as AuditRule]);
-      showFindings(findings);
+      showFindings(findings, rule === 'all' ? AUDIT_RULES : [rule as AuditRule]);
       if (!findings.length) {
         return { ok: true, facts: `The audit (${rule === 'all' ? 'all rules' : RULE_LABEL[rule as AuditRule]}) found no problems.`, text: 'The audit found nothing to flag.', blocks: [] };
       }
@@ -259,6 +315,10 @@ export const TOOLS: Tool[] = [
         facts: `Audit findings (${findings.length}):\n${findings.map((f) => `- [${f.severity}] ${RULE_LABEL[f.rule]}: ${f.detail}`).join('\n')}`,
         text: `I found **${findings.length} issue${findings.length === 1 ? '' : 's'}** on ${tables.length} table${tables.length === 1 ? '' : 's'}: ${byRule.map(([r, f]) => `${f.length} × ${RULE_LABEL[r].toLowerCase()}`).join(', ')}. Each affected table now carries a badge.`,
         blocks: [{ kind: 'findings', findings }, ...(findings.some((f) => f.fix) ? [{ kind: 'sql' as const, title: 'Suggested indexes', sql: findings.filter((f) => f.fix).map((f) => f.fix).join('\n') }] : [])],
+        next: [
+          ...(findings.some((f) => f.rule === 'missing_fk_index') ? [{ label: 'What if every missing index were added?', call: { tool: 'what_if_index' as const, args: { columns: findings.filter((f) => f.rule === 'missing_fk_index').map((f) => `${f.table}.${f.column}`) } } }] : []),
+          ...findings.filter((f) => f.rule === 'god_table').slice(0, 1).map((f) => ({ label: `Normalize ${f.table}`, call: { tool: 'propose_refactor' as const, args: { table: f.table, strategy: 'auto' } } })),
+        ],
       };
     },
   },
@@ -289,8 +349,9 @@ export const TOOLS: Tool[] = [
     run: () => {
       clearBadges();
       clearGhosts();
+      clearWhatIf();
       resetView();
-      return { ok: true, facts: 'The view was reset: the whole schema is shown, with no highlights, traces, badges or ghost tables.', text: 'Back to the full schema. Highlights, traces, badges and ghosts are cleared.', blocks: [] };
+      return { ok: true, facts: 'The view was reset: the whole schema is shown, with no highlights, traces, badges, ghost tables or what-if indexes.', text: 'Back to the full schema. Highlights, traces, badges, ghosts and what-if indexes are cleared.', blocks: [] };
     },
   },
 ];

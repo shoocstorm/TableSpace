@@ -56,6 +56,11 @@ describe('scripted router', () => {
     expect(r('seed lots of mock data for catalog')).toEqual({ tool: 'seed_data', args: { scope: 'catalog', size: 'large' } });
     expect(r('zoom out')).toEqual({ tool: 'reset_view', args: {} });
   });
+  it('sends index experiments to the what-if tool, and audits to the audit', () => {
+    expect(r('what if payments.order_id were indexed?')?.tool).toBe('what_if_index');
+    expect(r('add an index on inventory variant_id')?.tool).toBe('what_if_index');
+    expect(r('which indexes are missing?')?.tool).toBe('audit_schema');
+  });
   it('sends questions about the data to the SQL writer', () => {
     expect(r('how many orders per user')).toEqual({ tool: 'write_sql', args: { tables: ['orders', 'users'] } });
     expect(r('write a query for the latest refunds')).toEqual({ tool: 'write_sql', args: { tables: ['refunds'] } });

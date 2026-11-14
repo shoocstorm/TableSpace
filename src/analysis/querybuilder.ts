@@ -496,9 +496,12 @@ export function repairSpec(schema: SchemaDef, spec: QuerySpec): QuerySpec {
 
 /** The query in words: what was understood, for the user to check against what they meant. */
 export function explainSpec(schema: SchemaDef, spec: QuerySpec): string {
+  // "brands by number of products" counts products: the table that isn't the one grouped by
+  const grouped = new Set(spec.groupBy.map((g) => split(g)[0]));
+  const counted = spec.tables.find((t) => !grouped.has(t)) ?? spec.tables[0];
   const what =
     spec.aggregate === 'count'
-      ? `the number of ${spec.tables[0]} rows`
+      ? `the number of ${counted} rows`
       : spec.aggregate !== 'none'
         ? `the ${{ sum: 'total', avg: 'average', min: 'smallest', max: 'largest' }[spec.aggregate]} ${spec.aggregateColumn}`
         : spec.select.length

@@ -4,12 +4,13 @@
 // agent's tools and the dock's buttons call the same actions.
 
 import { create } from 'zustand';
-import { badgesFor, type Finding } from '../analysis/audit';
+import { audit, badgesFor, type AuditRule, type Finding } from '../analysis/audit';
 import type { GhostTable } from '../analysis/normalize';
-import type { PlanStep } from '../analysis/plan';
+import { simulatePlan, type PlanStep } from '../analysis/plan';
+import { parseQuery } from '../analysis/sql';
 import { runSeed, seedPlan, type Row, type SeedSize } from '../analysis/seed';
 import { computeLayout, explode, type Layout, type Vec3 } from '../layout/force';
-import { edgesOf, neighbours, type Edge } from '../schema/graph';
+import { edgesOf, isIndexed, neighbours, type Edge } from '../schema/graph';
 import { DEFAULT_SCHEMA, schemaById } from '../schema/registry';
 import type { SchemaDef } from '../schema/types';
 
@@ -17,8 +18,19 @@ export type Trace = { label: string; sql: string; steps: PlanStep[] };
 export type CameraCmd = { nonce: number; tables: string[] | null; /** Other points to keep in view (ghost tables). */ extra?: Vec3[] };
 export type Seeding = { order: string[]; current: string | null; done: number };
 
+export type WhatIf = { table: string; column: string };
+
 type SceneState = {
+  /** The schema in effect: the database's own, plus any what-if indexes. */
   schema: SchemaDef;
+  /** The schema as the database has it. */
+  base: SchemaDef;
+  /** Indexes being tried out: the audit and query plans see them, the database doesn't have them. */
+  whatIf: WhatIf[];
+  /** The rules of the audit on show, so it can be re-run when the schema changes. */
+  auditRules: AuditRule[] | null;
+  /** A complete, consistent set of mock rows for running queries; made on first use. */
+  mock: Record<string, Row[]> | null;
   edges: Edge[];
   layout: Layout;
   explodedLayout: Layout;
@@ -58,6 +70,10 @@ function fresh(schema: SchemaDef): Omit<SceneState, 'camera'> {
   const layout = computeLayout(schema);
   return {
     schema,
+    base: schema,
+    whatIf: [],
+    auditRules: null,
+    mock: null,
     edges: edgesOf(schema),
     layout,
     explodedLayout: explode(layout, schema),
@@ -99,8 +115,9 @@ export function litTables(s: Pick<SceneState, 'xray' | 'focus' | 'selected' | 's
 
 let seedRun = 0;
 
-export function setSchema(id: string): void {
-  if (get().schema.id === id) return;
+/** Switches database. `force` rebuilds the scene even for the same id (an import that replaced it). */
+export function setSchema(id: string, force = false): void {
+  if (get().base.id === id && !force) return;
   seedRun++;
   try {
     localStorage.setItem(SCHEMA_KEY, id);
@@ -147,10 +164,60 @@ export function clearFocus(): void {
   set({ focus: null, focusLabel: null, xray: false });
 }
 
-export function showFindings(findings: Finding[]): void {
-  set({ findings, badges: badgesFor(findings) });
+export function showFindings(findings: Finding[], rules: AuditRule[] | null = null): void {
+  set({ findings, badges: badgesFor(findings), auditRules: rules });
 }
-export const clearBadges = () => set({ findings: [], badges: {} });
+export const clearBadges = () => set({ findings: [], badges: {}, auditRules: null });
+
+/** The base schema with the what-if indexes added. */
+function withIndexes(base: SchemaDef, whatIf: WhatIf[]): SchemaDef {
+  if (!whatIf.length) return base;
+  return {
+    ...base,
+    tables: base.tables.map((t) => {
+      const mine = whatIf.filter((w) => w.table === t.name);
+      return mine.length ? { ...t, indexes: [...t.indexes, ...mine.map((w) => ({ name: `${t.name}_${w.column}_idx`, columns: [w.column], whatIf: true }))] } : t;
+    }),
+  };
+}
+
+/** After the effective schema changes: the audit on show and the running trace are worked out again. */
+function applyWhatIf(whatIf: WhatIf[]): void {
+  const s = get();
+  const schema = withIndexes(s.base, whatIf);
+  const patch: Partial<SceneState> = { schema, whatIf };
+  if (s.auditRules) {
+    const findings = audit(schema, s.auditRules);
+    Object.assign(patch, { findings, badges: badgesFor(findings) });
+  }
+  if (s.trace) {
+    const parsed = parseQuery(s.trace.sql);
+    const planned = parsed.ok ? simulatePlan(schema, parsed.query) : null;
+    if (planned?.ok) Object.assign(patch, { trace: { ...s.trace, steps: planned.plan.steps }, traceStep: 0 });
+  }
+  set(patch);
+}
+
+/** Tries out indexes. Returns the ones that were new (a column already indexed is left alone). */
+export function addWhatIf(items: WhatIf[]): WhatIf[] {
+  const s = get();
+  const added = items.filter((w, i) => {
+    const t = s.schema.tables.find((x) => x.name === w.table);
+    return t?.columns.some((c) => c.name === w.column) && !isIndexed(t, w.column) && items.findIndex((x) => x.table === w.table && x.column === w.column) === i;
+  });
+  if (added.length) applyWhatIf([...s.whatIf, ...added]);
+  return added;
+}
+export const clearWhatIf = () => get().whatIf.length && applyWhatIf([]);
+
+/** Mock rows for every table, consistent across foreign keys, for running generated queries. Made once per schema. */
+export function mockData(): Record<string, Row[]> {
+  const s = get();
+  if (s.mock) return s.mock;
+  const mock = runSeed(s.base, seedPlan(s.base, null, 'medium'), 7).rows;
+  set({ mock });
+  return mock;
+}
 
 export function showGhosts(ghosts: GhostTable[]): void {
   set((s) => ({ ghosts: [...s.ghosts.filter((g) => !ghosts.some((n) => n.source === g.source)), ...ghosts] }));

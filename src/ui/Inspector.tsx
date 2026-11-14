@@ -101,7 +101,7 @@ export function Inspector({ compact }: { compact: boolean }) {
             <ul className="space-y-1 font-mono text-[11.5px] text-slate-400">
               {table.indexes.map((i) => (
                 <li key={i.name} className="break-all">
-                  {i.unique ? 'unique ' : ''}({i.columns.join(', ')})
+                  {i.unique ? 'unique ' : ''}({i.columns.join(', ')}){i.whatIf && <span className="ml-1.5 text-teal-300">what-if</span>}
                 </li>
               ))}
             </ul>
