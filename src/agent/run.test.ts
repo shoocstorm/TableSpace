@@ -160,6 +160,15 @@ describe('the steps of a turn', () => {
     expect(outline((await turn('Describe orders', { tool: 'describe_tables', args: { tables: ['orders'] } })).steps)).toEqual(['route:you:ok', 'tool:code:ok', 'reply:model:ok']);
   });
 
+  it('several steps without a model: a compound request is worked through part by part, by keywords', async () => {
+    const { steps, updates } = await turn('describe orders and check whether its indexes are right');
+    expect(outline(steps)).toEqual(['route:keywords:ok', 'tool:code:ok', 'route:keywords:ok', 'tool:code:ok', 'reply:code:ok']);
+    expect(steps[2].title).toBe('Your request also asks for audit_schema');
+    expect(updates.filter((u) => u.type === 'tool').map((u) => u.type === 'tool' && u.tool)).toEqual(['describe_tables', 'audit_schema']);
+    useSettings.getState().set({ maxSteps: 1 });
+    expect(outline((await turn('describe orders and check whether its indexes are right')).steps)).toEqual(['route:keywords:ok', 'tool:code:ok', 'reply:code:ok']);
+  });
+
   it('a weak first choice loses to a plain keyword match for another tool', async () => {
     model.loaded = true;
     model.scores = [[[letter('seed_data'), -1.0], [letter('audit_schema'), -1.1], ['A', -1.2], ['B', -1.3]]];

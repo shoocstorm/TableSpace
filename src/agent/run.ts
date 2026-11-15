@@ -22,8 +22,8 @@ import { mentionedColumnNames } from '../schema/insight';
 import { useScene } from '../state/scene';
 import { useSettings } from '../state/settings';
 import { choiceGrammar, schemaGrammar, validate, type ObjectSchema } from './grammar';
-import { ANSWER, answerMessages, decisionState, letteredRouterMessages, fillArgsMessages, FIRST_QUESTION, firstOptions, narrateMessages, NEXT_QUESTION, nextOptions, nextToolMessages, pickToolMessages, stripThink, synthesisMessages, type Observation } from './prompt';
-import { route, SCRIPTED_HELP } from './router';
+import { ANSWER, answerMessages, decisionRequest, decisionState, fillArgsMessages, FIRST_QUESTION, firstOptions, narrateMessages, NEXT_QUESTION, nextOptions, nextToolMessages, pickToolMessages, stripThink, synthesisMessages, type Observation } from './prompt';
+import { alsoAsked, route, SCRIPTED_HELP } from './router';
 import { mentionedDomain, mentionedTables, TOOLS, toolByName, type Block, type Suggestion, type Tool, type ToolCall, type ToolName, type ToolResult } from './tools';
 
 /** Who chose the tool: the model, the keyword router, or a prompt chip that names it outright. */
@@ -79,11 +79,11 @@ type Picked = { id: string; /** The share of the chosen option; null when the na
  * One choice among options. Read from one token when that is on (every option scored at once); otherwise,
  * or when the readout fails, the model spells the option's name out under a grammar, as it always could.
  */
-async function pick(state: string, question: string, options: DecisionOption[], named: ChatMessage[], signal: AbortSignal, without: string[] = [], lettered?: ChatMessage[]): Promise<Picked> {
+async function pick(state: string, request: string, question: string, options: DecisionOption[], named: ChatMessage[], signal: AbortSignal, without: string[] = []): Promise<Picked> {
   let fellBack: string | undefined;
   if (useSettings.getState().fastDecide) {
     try {
-      const d = await decide(state, question, options, signal, { without, messages: (globalThis as { __variant?: string }).__variant === 'L' ? lettered : undefined });
+      const d = await decide(state, question, options, signal, { without, request });
       return { id: d.chosen, confidence: d.confidence, details: [{ label: 'Sent to the model', text: sent(d.messages) }, { label: 'How the model scored each option', text: scoresText(d) }] };
     } catch (e) {
       if (!(e instanceof DecisionError)) throw e;
@@ -139,7 +139,9 @@ async function writeArgs(tool: Tool, text: string, done: Observation[], scripted
 
 async function chooseTool(text: string, signal: AbortSignal, begin: Begin): Promise<{ call: ToolCall | null; by: Chooser }> {
   const schema = useScene.getState().schema;
-  const scripted = route(schema, text);
+  // a request of several parts starts with its first part, not with whichever keyword of the whole ranks highest
+  const parts = alsoAsked(schema, text);
+  const scripted = parts.length > 1 ? parts[0] : route(schema, text);
   const keywordArgs = scripted ? [{ label: 'Arguments from the keyword rules', text: json(scripted.args) }] : undefined;
   if (!hasModel() || !useSettings.getState().modelPicks) {
     begin({
@@ -161,7 +163,7 @@ async function chooseTool(text: string, signal: AbortSignal, begin: Begin): Prom
     // Measured with Qwen3 0.6B: it put most of its weight on "answer" for 14 of 27 requests about the schema,
     // and for most of those the right tool was its runner-up.
     const specific = mentionedTables(schema, text).length > 0 || mentionedDomain(schema, text) !== null || mentionedColumnNames(schema, text).length > 0;
-    picked = await pick(decisionState(schema, text), FIRST_QUESTION, firstOptions(TOOLS), prompt, signal, specific ? [ANSWER] : [], letteredRouterMessages(schema, firstOptions(TOOLS), text));
+    picked = await pick(decisionState(schema), decisionRequest(text), FIRST_QUESTION, firstOptions(TOOLS), prompt, signal, specific ? [ANSWER] : []);
   } catch (e) {
     if (isAbort(e)) throw e;
     console.warn('[agent] tool choice failed; using the keyword router', e);
@@ -202,7 +204,7 @@ async function chooseNext(text: string, done: Observation[], signal: AbortSignal
   const asked = begin({ kind: 'route', by: 'model', title: 'Deciding whether to look further' });
   let picked: Picked;
   try {
-    picked = await pick(decisionState(schema, text, done), NEXT_QUESTION, nextOptions(options), nextToolMessages(schema, options, text, done), signal);
+    picked = await pick(decisionState(schema), decisionRequest(text, done), NEXT_QUESTION, nextOptions(options), nextToolMessages(schema, options, text, done), signal);
   } catch (e) {
     if (isAbort(e)) throw e;
     console.warn('[agent] the follow-on decision failed; answering from what was found', e);
@@ -263,9 +265,11 @@ export async function runTurn(input: TurnInput, onUpdate: (u: TurnUpdate) => voi
     return;
   }
 
-  // a one-click prompt is one tool, as clicked; so is a turn the model does not steer
+  // a one-click prompt is one tool, as clicked. Otherwise the turn may go on: to whatever else the request plainly
+  // asks for (matched part by part, by keywords), and then, with a model steering, to what the model judges is missing.
   const steered = !direct && hasModel() && useSettings.getState().modelPicks;
-  const maxSteps = steered ? Math.max(1, useSettings.getState().maxSteps) : 1;
+  const maxSteps = direct ? 1 : Math.max(1, useSettings.getState().maxSteps);
+  const planned = direct || maxSteps < 2 ? [] : alsoAsked(schema, text);
   const done: (Observation & { result: ToolResult; tool: ToolName })[] = [];
   let blocks: Block[] = [];
   let next: Suggestion[] = [];
@@ -315,8 +319,15 @@ export async function runTurn(input: TurnInput, onUpdate: (u: TurnUpdate) => voi
     next = [...next, ...(result.next ?? [])].filter((n, i, all) => all.findIndex((x) => x.label === n.label) === i);
     onUpdate({ type: 'result', ok: result.ok, blocks, next: next.filter((n) => !done.some((d) => d.tool === n.call.tool)).slice(0, 3) });
     if (done.length >= maxSteps || signal.aborted) break;
-    call = await chooseNext(text, done, signal, begin);
-    by = 'model';
+    const also = planned.find((p) => !done.some((d) => d.tool === p.tool));
+    if (also) {
+      begin({ kind: 'route', by: 'keywords', title: `Your request also asks for ${also.tool}`, note: 'Your request has several parts. Each was matched by keywords on its own, and this one names a tool that reads and reports, so it runs too.', details: [{ label: 'Arguments from the keyword rules', text: json(also.args) }] })();
+      call = also;
+      by = 'scripted';
+    } else {
+      call = steered ? await chooseNext(text, done, signal, begin) : null;
+      by = 'model';
+    }
   }
 
   const own = done.map((d) => d.result.text).join('\n\n');

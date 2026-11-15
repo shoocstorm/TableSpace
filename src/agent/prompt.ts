@@ -73,37 +73,12 @@ export function observed(done: Observation[], budget = 1800): string {
   return done.map((o, i) => `${i + 1}. ${o.tool} ${JSON.stringify(o.args)}${o.ok ? '' : ' (found nothing)'}:\n${o.facts.length > each ? `${o.facts.slice(0, each)}…` : o.facts}`).join('\n');
 }
 
-/** The situation a decision is made from: the database, the request, then what the turn's tools have found so far. */
-export function decisionState(schema: SchemaDef, userText: string, done: Observation[] = []): string {
-  return [
-    `TableSpace, a 3D viewer of the SQL database "${schema.name}".`,
-    'Tables by domain:',
-    schemaDigest(schema, 'names'),
-    '',
-    `User request: ${userText.slice(0, 1200)}`,
-    ...(done.length ? ['', 'Tools already run for this request, and what they found:', observed(done)] : []),
-  ].join('\n');
-}
+/** What a decision is made from that never changes while a database is open. It leads the prompt, so it is read once. */
+export const decisionState = (schema: SchemaDef): string => [`TableSpace, a 3D viewer of the SQL database "${schema.name}".`, 'Tables by domain:', schemaDigest(schema, 'names')].join('\n');
 
-/** EVAL VARIANT L: the router prompt with lettered options, the request last, so the long unchanging part is reused between turns. */
-export function letteredRouterMessages(schema: SchemaDef, options: DecisionOption[], userText: string): ChatMessage[] {
-  const L = 'ABCDEFGHIJKLMNOP';
-  const letterOf = (id: string) => L[options.findIndex((o) => o.id === id)];
-  const system = [
-    `You route requests in TableSpace, a 3D viewer of the SQL database "${schema.name}".`,
-    'Reply with exactly one option letter and nothing else:',
-    ...options.map((o, i) => `${L[i]}. ${o.text}`),
-    '',
-    'Examples:',
-    ...ROUTES.map((r) => `${r.slice(0, r.lastIndexOf('-> '))}-> ${letterOf(r.slice(r.lastIndexOf('-> ') + 3))}`),
-    '',
-    'Tables by domain:',
-    schemaDigest(schema, 'names'),
-  ].join('\n');
-  return [
-    { role: 'system', content: system },
-    { role: 'user', content: userText.slice(0, 1200) },
-  ];
+/** What changes from decision to decision: the request, then what the turn's tools have found. It goes after the options (llm/decide.ts). */
+export function decisionRequest(userText: string, done: Observation[] = []): string {
+  return [`User request: ${userText.slice(0, 1200)}`, ...(done.length ? ['', 'Tools already run for this request, and what they found:', observed(done)] : [])].join('\n');
 }
 
 export const FIRST_QUESTION = `Which option handles the user request? Typical requests:\n${ROUTES.join('\n')}`;

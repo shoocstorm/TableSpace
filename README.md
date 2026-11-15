@@ -116,7 +116,7 @@ Small local models can't be trusted to write tool calls free-form, so they don't
 1. **Choose.** The model is shown the tools as lettered options and its choice is read from a single token (below). `answer` is always one of the options.
 2. **Fill.** It writes the arguments as JSON under a grammar in which table names, domains and presets are enums built from the active database, so it can't name a table that doesn't exist. The result is validated again in TypeScript.
 3. **Run.** The tool does its work deterministically and changes the 3D scene.
-4. **Look further, or stop.** Each tool lists the tools worth running after it (`then` in `src/agent/tools.ts`). If there are any, the model chooses between stopping and one of them; the turn repeats from step 2, up to the number of tools set in Settings (3 by default).
+4. **Look further, or stop.** If the request has several parts, the tools the other parts ask for run next. Otherwise, if the tool lists tools worth running after it (`then` in `src/agent/tools.ts`), the model chooses between stopping and one of them. Either way the turn repeats from step 2, up to the number of tools set in Settings (3 by default).
 5. **Explain.** The model streams a short explanation from the tool's facts; after several tools, one answer from all of them.
 
 A keyword router backs this up: when the model says `answer` to a request that plainly matches a tool, or a step fails, the match is used.
@@ -135,11 +135,25 @@ The model is given table names and foreign keys, not columns. Five tools read th
 
 ### Several steps in one answer
 
+A request such as *describe orders and check whether its indexes are right* is split at commas, *and*, *then* and *also*, and each part is matched by the keyword rules on its own (`alsoAsked` in `src/agent/router.ts`), with the tables the whole request names when a part names none. The turn starts with the first part's tool and runs the others after it. This needs no model, so it works the same way every time, in scripted mode too.
+
+After that, with a model loaded, the model is asked whether the request needs anything the results do not contain. In practice Qwen3 0.6B almost never says yes: across the live runs below it put 94–100% on stopping after every tool, including on compound requests. Splitting the request is what makes compound requests work; the model's follow-on decision is a backstop.
+
 Only tools that read and report are chained: the five above, the audit and the query trace. A tool that adds something to the scene (a what-if index, ghost tables, mock rows) is never run as a follow-on step; it stays a one-click suggestion under the answer. A tool is not offered twice in a turn, a tool with nothing listed after it ends the turn without a decision being spent, and a one-click prompt always runs exactly the tool it names. Later steps report without moving the camera, so the scene stays where the first step put it.
 
 ### One-token decisions
 
-A choice is not written out. The model gets the situation, a question and lettered options, and the first token's log-probabilities are read: a softmax over the option letters gives every option a share, and the largest wins (`src/llm/decide.ts`, ported from Andai's `docs/decider.md`). It scores every option, which the name alone does not. It is not faster here: measured with Qwen3 0.6B on WebGPU, a first decision took a median 1.4 s against 0.6 s for the spelled-out name, whose prompt is reused between turns. When the request names a table, column or domain, `answer` cannot win and the best-scoring tool is taken. Two gates use the scores: a first choice with under 35% loses to a keyword match for a different tool, and a follow-on step needs at least 50% or the turn stops and answers. The shares rank options; they are not calibrated probabilities. If the readout lists no option letter, the model is asked to spell the name out under a grammar instead, as before; Settings can switch the readout off altogether.
+A choice is not written out. The model gets the situation, a question and lettered options, and the first token's log-probabilities are read: a softmax over the option letters gives every option a share, and the largest wins (`src/llm/decide.ts`, ported from Andai's `docs/decider.md`). It scores every option, which the name alone does not. When the request names a table, column or domain, `answer` cannot win and the best-scoring tool is taken: Qwen3 0.6B put most of its weight on `answer` for about half the requests about the schema, and the right tool was usually its runner-up.
+
+The prompt is Andai's with one change: the user's request (and what the turn has found) comes after the options instead of inside the state, so the long unchanging part (the tables, the question, fourteen options) is read once and reused. Measured with Qwen3 0.6B on CPU over the same 30 requests:
+
+| Choosing the first tool | Right | Median per decision | Median per answer |
+|---|---|---|---|
+| One token, request last (shipped) | **23/30** | 0.40 s | 4.6 s |
+| One token, Andai's order | 21/30 | 5.4 s | 10.8 s |
+| Spelled-out name (the old way) | 17/30 | 0.17 s | 3.5 s |
+
+Two other layouts were tried and dropped: the question and options before the whole state (13/30), and lettered options inside the old router prompt (0.13 s, but 12/30). The very first decision of a session takes about 5 s while the shared part is read for the first time. Two gates use the scores: a first choice with under 35% loses to a keyword match for a different tool, and a follow-on step needs at least 50% or the turn stops and answers. The shares rank options; they are not calibrated probabilities. If the readout lists no option letter, the model is asked to spell the name out under a grammar instead, as before; Settings can switch the readout off altogether.
 
 Andai's faster decider, the Laya checkpoint, is not used: it runs on MLX through Rust on Apple Silicon and has no browser runtime (Andai's own web build falls back to the chat model for the same reason).
 
@@ -253,7 +267,8 @@ Measured in headless Chrome emulating an iPhone (its user agent and screen, the 
 
 ## ✅ What was checked
 
-- `bun run test`: 106 unit tests over the graph, layout, audit, SQL reader, plan simulation, query builder, refactor proposals, seeding, grammar, router and the steps a turn reports (the model's side of those is a stand-in). Every generated query in the tests is read back and planned, and every pair of connected tables in both schemas is joined and parsed.
+- `bun run test`: 135 unit tests over the graph, layout, audit, schema lookups, SQL reader, plan simulation, query builder, refactor proposals, seeding, grammar, router, the one-token readout and the steps a turn reports, including turns of several steps (the model's side of those is a stand-in).
+- The agent with Qwen3 0.6B in headless Chrome (CPU, wllama 3.6.1) over 30 requests: 15 that name their tool plainly, 9 that no keyword rule matches, and 6 compound ones. The table above is from these runs. Five of the six compound requests ran every tool they asked for; in the sixth (*describe orders and check whether its indexes are right*) the second part went to the audit's missing-index rule instead of `inspect_indexes`. None of the 24 others ran a second tool. Every generated query in the tests is read back and planned, and every pair of connected tables in both schemas is joined and parsed.
 - The production build under `bun run preview`, in headless Chrome at 1440×900 and 390×844 (emulated phone): cross-origin isolated, service worker registered, no console errors or CSP violations; every chip, typed SQL, search, the second schema and the exploded view were looked at in screenshots.
 - Qwen3 0.6B loaded in Chrome on a Mac (WebGPU, 29/29 layers, about 125 tok/s) and answered free-form prompts through the agent loop, including seven SQL requests whose output was read by hand. Generated SQL was not run against a real PostgreSQL.
 

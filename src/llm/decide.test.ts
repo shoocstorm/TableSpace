@@ -24,6 +24,8 @@ describe('the decision prompt', () => {
     expect(user.content).toBe('State:\nthe state\n\nQuestion:\nWhich one?\n\nAllowed options:\nA. answer in words\nB. audit the schema\nC. trace a query\n\nReply with exactly one option letter from: A, B, C.');
     expect(labelsFor(3)).toEqual(['A', 'B', 'C']);
     expect(letterGrammar(['A', 'B'])).toBe('root ::= "A" | "B"');
+    // what changes from turn to turn comes after the options, so the start of the prompt is reused
+    expect(decisionMessages('the state', 'Which one?', options, 'User request: hi')[1].content).toBe('State:\nthe state\n\nQuestion:\nWhich one?\n\nAllowed options:\nA. answer in words\nB. audit the schema\nC. trace a query\n\nUser request: hi\n\nReply with exactly one option letter from: A, B, C.');
   });
 });
 
