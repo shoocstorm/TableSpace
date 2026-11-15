@@ -70,6 +70,8 @@ export type Tool = {
   /** Shown on the chip while the tool runs. */
   label: string;
   schema: (schema: SchemaDef) => ObjectSchema;
+  /** Reads the schema and reports, adding nothing pretend to the scene: safe to run as a further step of a turn nobody clicked for. */
+  reads?: boolean;
   /**
    * The tools worth running after this one in the same turn, for the model to choose from (agent/run.ts).
    * Only tools that read and report are listed: anything that adds to the scene stays the user's click.
@@ -173,6 +175,7 @@ export const TOOLS: Tool[] = [
   {
     name: 'describe_tables',
     effect: 'analyze',
+    reads: true,
     leaves: "Reports each table's columns, keys, relationships and indexes, and lights those tables. Changes nothing else. Take the highlight away with the Focus pill, or Reset.",
     examples: ["describe {t}", "what columns do {t} and {p} have?", "what is the primary key of {p}?"],
     label: 'Reading the tables',
@@ -198,6 +201,7 @@ export const TOOLS: Tool[] = [
   {
     name: 'relate_tables',
     effect: 'analyze',
+    reads: true,
     leaves: "Reports how tables join (the exact columns, through other tables if need be) and what depends on them, and lights the tables on the path. Changes nothing else. Take the highlight away with the Focus pill, or Reset.",
     examples: ["how do {t} and {p} relate?", "how do I join {t} to {p}?", "what depends on {p}?"],
     label: 'Following the relationships',
@@ -237,6 +241,7 @@ export const TOOLS: Tool[] = [
   {
     name: 'inspect_indexes',
     effect: 'analyze',
+    reads: true,
     leaves: "Reports the indexes of the tables named (or of the whole schema): what each covers, foreign keys with none, and redundant ones. Lights the tables it reports on. Changes nothing else.",
     examples: ["which indexes does {t} have?", "list the indexes on {t} and {p}", "are any indexes redundant?"],
     label: 'Reading the indexes',
@@ -261,6 +266,7 @@ export const TOOLS: Tool[] = [
   {
     name: 'schema_overview',
     effect: 'analyze',
+    reads: true,
     leaves: "Reports the size and shape of the schema or of one domain: counts, the largest, widest and most connected tables, junction and unrelated tables. Changes nothing in the scene unless a domain is named, which it lights.",
     examples: ["give me an overview of the schema", "which tables are the biggest?", "summarize the {d} domain"],
     label: 'Sizing up the schema',
@@ -277,6 +283,7 @@ export const TOOLS: Tool[] = [
   {
     name: 'find_columns',
     effect: 'analyze',
+    reads: true,
     leaves: "Reports every table holding a column of the given name or kind, and lights those tables. Changes nothing else. Take the highlight away with the Focus pill, or Reset.",
     examples: ["which tables have a {fk} column?", "find every timestamp column", "where are the nullable foreign keys?"],
     label: 'Searching the columns',
@@ -409,6 +416,7 @@ export const TOOLS: Tool[] = [
   {
     name: 'trace_query',
     effect: 'analyze',
+    reads: true,
     leaves: "Animates the query's join order along the relationship lines and marks slow scans red. The plan is simulated from row counts and indexes; no query is sent anywhere. Take it away with the trace pill, or Reset.",
     examples: ["trace the {q} query", "why is this slow?  + a pasted SELECT … JOIN …"],
     label: 'Tracing the query',
@@ -477,6 +485,7 @@ export const TOOLS: Tool[] = [
   {
     name: 'audit_schema',
     effect: 'analyze',
+    reads: true,
     leaves: "Pins a warning badge on each table with a finding and lists them. Take the badges away with the warnings pill above the dock.",
     examples: ["audit the schema", "any missing indexes?", "are any tables unused?"],
     label: 'Auditing the schema',

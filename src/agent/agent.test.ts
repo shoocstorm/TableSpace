@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ecommerce } from '../schema/ecommerce';
 import { choiceGrammar, schemaGrammar, validate } from './grammar';
 import { schemaDigest, stripThink } from './prompt';
-import { route } from './router';
+import { alsoAsked, route } from './router';
 import { mentionedDomain, mentionedTables, TOOLS } from './tools';
 
 describe('grammar', () => {
@@ -80,6 +80,19 @@ describe('scripted router', () => {
     expect(r('which tables are the biggest tables?')?.tool).toBe('schema_overview');
     expect(r('which tables have an email column?')).toEqual({ tool: 'find_columns', args: { columns: ['email'], kind: 'any' } });
     expect(r('find every timestamp column')).toEqual({ tool: 'find_columns', args: { columns: [], kind: 'time' } });
+  });
+  it('reads a compound request part by part, keeping only tools that read and report', () => {
+    const also = (text: string) => alsoAsked(ecommerce, text).map((c) => c.tool);
+    expect(also('describe orders and check whether its indexes are right')).toEqual(['describe_tables', 'audit_schema']);
+    expect(also('what columns does orders have, and how does it join to users?')).toEqual(['describe_tables', 'relate_tables']);
+    expect(also('why is checkout slow, and which indexes do those tables have?')).toEqual(['trace_query', 'inspect_indexes']);
+    expect(also('give me an overview and tell me what is wrong with the schema')).toEqual(['schema_overview', 'audit_schema']);
+    // one request, however it is phrased: names joined by "and" are not parts
+    expect(also('describe orders and payments')).toEqual(['describe_tables']);
+    expect(also('explain how payments connects to users and what columns it has')).toEqual(['relate_tables', 'describe_tables']);
+    expect(also('audit the schema')).toEqual([]);
+    // nothing that adds to the scene is ever planned
+    expect(also('audit the schema and seed mock data, then normalize orders')).toEqual(['audit_schema']);
   });
   it('treats SQL as a query to trace and names as a place to go', () => {
     expect(r('select * from orders o join payments p on p.order_id = o.id')?.tool).toBe('trace_query');

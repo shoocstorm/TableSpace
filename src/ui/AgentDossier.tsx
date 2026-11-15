@@ -12,7 +12,7 @@
 import { Check, ChevronRight, Copy, Eye, FlaskConical, Play, ScanSearch, Settings2, ShieldCheck, Sparkles, X } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
 import { chipsFor } from '../agent/chips';
-import { ANSWER, answerMessages, decisionState, fillArgsMessages, FIRST_QUESTION, firstOptions, narrateMessages, NEXT_QUESTION, nextOptions, schemaDigest } from '../agent/prompt';
+import { ANSWER, answerMessages, decisionRequest, decisionState, fillArgsMessages, FIRST_QUESTION, firstOptions, narrateMessages, NEXT_QUESTION, nextOptions, schemaDigest } from '../agent/prompt';
 import { decisionMessages } from '../llm/decide';
 import { TOOLS, type Tool, type ToolCall, type ToolEffect } from '../agent/tools';
 import { MODELS, useEngine } from '../llm/engine';
@@ -195,8 +195,8 @@ export function ProfileTab() {
   const prompts = useMemo(() => {
     const example = TOOLS.find((t) => t.then?.length) ?? TOOLS[0];
     return {
-      router: decisionMessages(decisionState(schema, ''), FIRST_QUESTION, firstOptions(TOOLS))[1].content,
-      next: decisionMessages(decisionState(schema, '', [{ tool: example.name, args: {}, ok: true, facts: '(what the tool found)' }]), NEXT_QUESTION, nextOptions((example.then ?? []).flatMap((n) => TOOLS.find((t) => t.name === n) ?? [])))[1].content,
+      router: decisionMessages(decisionState(schema), FIRST_QUESTION, firstOptions(TOOLS), decisionRequest('…'))[1].content,
+      next: decisionMessages(decisionState(schema), NEXT_QUESTION, nextOptions((example.then ?? []).flatMap((n) => TOOLS.find((t) => t.name === n) ?? [])), decisionRequest('…', [{ tool: example.name, args: {}, ok: true, facts: '(what the tool found)' }]))[1].content,
       args: fillArgsMessages(schema, example, '')[0].content,
       narrate: narrateMessages(schema, '', example, '')[0].content,
       answer: answerMessages(schema, [], '')[0].content,

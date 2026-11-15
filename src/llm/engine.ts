@@ -353,6 +353,9 @@ export type TokenScore = { token: string; logprob: number; bytes?: number[] | nu
  * neutral sampling, so the logprobs are a plain readout of the logits; 20
  * candidates, so every option letter is listed even when other tokens rank
  * among them; no `post_sampling_probs`, which would drop the list.
+ * The grammar holds only the sampled token to an option letter; it costs
+ * nothing measurable (Qwen3 0.6B on CPU, 6 decisions each: 4.7 s with and
+ * without, all of it reading the prompt).
  */
 export async function firstToken(messages: ChatMessage[], opts: { grammar: string; signal?: AbortSignal }): Promise<{ sampled: string | null; top: TokenScore[] }> {
   const w = wllama;

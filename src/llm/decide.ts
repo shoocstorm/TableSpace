@@ -57,17 +57,25 @@ export class DecisionError extends Error {
 export const labelsFor = (n: number) => LETTERS.slice(0, n).split('');
 
 /**
- * Andai's decision prompt, word for word: the state, the question, the lettered options. The order matters.
- * Measured here (Qwen3 0.6B, 30 requests): with the question and options moved ahead of the state, so
- * that the unchanging part would be reused between turns, the model chose `write_sql` for almost
- * everything and 13 first choices were right, against 18 of 27 in this order.
+ * Andai's decision prompt, with what changes from turn to turn moved last: the
+ * state (what never changes while a database is open), the question, the
+ * lettered options, and only then `request` (the user's request and what the
+ * turn has found so far). llama.cpp reuses the part of a prompt it has
+ * already read, so the long unchanging part is read once.
+ *
+ * Measured with Qwen3 0.6B on CPU (wllama 3.6.1, 30 requests), first tool right
+ * and median time per first decision:
+ * - request inside the state, before the options (Andai's order): 21/30, 5.4 s;
+ *   every turn re-read the ~1,000 tokens of question and options;
+ * - request last (this): 23/30, 0.40 s;
+ * - question and options first, then the whole state: 13/30.
  */
-export function decisionMessages(state: string, question: string, options: DecisionOption[]): ChatMessage[] {
+export function decisionMessages(state: string, question: string, options: DecisionOption[], request = ''): ChatMessage[] {
   const labels = labelsFor(options.length);
   const block = options.map((o, i) => `${labels[i]}. ${o.text}`).join('\n');
   return [
     { role: 'system', content: 'Make the requested decision from the supplied state. Follow the output format exactly.' },
-    { role: 'user', content: `State:\n${state}\n\nQuestion:\n${question}\n\nAllowed options:\n${block}\n\nReply with exactly one option letter from: ${labels.join(', ')}.` },
+    { role: 'user', content: `State:\n${state}\n\nQuestion:\n${question}\n\nAllowed options:\n${block}\n\n${request ? `${request}\n\n` : ''}Reply with exactly one option letter from: ${labels.join(', ')}.` },
   ];
 }
 
@@ -99,15 +107,15 @@ export function optionLogprobs(top: TokenScore[], labels: string[]): { values: n
 export const letterGrammar = (labels: string[]) => `root ::= ${labels.map((l) => `"${l}"`).join(' | ')}`;
 
 /**
- * Scores `options` for `question` given `state`, in one forward pass of the loaded model.
+ * Scores `options` for `question` given `state` and `opts.request`, in one forward pass of the loaded model.
  * `opts.without`: options that stay in the prompt but cannot win:
  * the shares are taken over the others only. Used when code already knows an option is wrong.
  */
-export async function decide(state: string, question: string, options: DecisionOption[], signal?: AbortSignal, opts: { without?: string[]; /** A prompt of the caller's own that letters `options` the same way. */ messages?: ChatMessage[] } = {}): Promise<Decision> {
+export async function decide(state: string, question: string, options: DecisionOption[], signal?: AbortSignal, opts: { without?: string[]; request?: string } = {}): Promise<Decision> {
   if (options.length < 2 || options.length > MAX_OPTIONS) throw new Error(`A decision needs 2–${MAX_OPTIONS} options, got ${options.length}.`);
   const started = performance.now();
   const labels = labelsFor(options.length);
-  const messages = opts.messages ?? decisionMessages(state, question, options);
+  const messages = decisionMessages(state, question, options, opts.request);
   const open = options.map((o, i) => ({ o, label: labels[i] })).filter(({ o }) => !opts.without?.includes(o.id));
   if (!open.length) throw new Error('A decision needs at least one option that can win.');
   let read: Awaited<ReturnType<typeof firstToken>>;
