@@ -7,6 +7,7 @@ import { formatRows, isIndexed } from '../schema/graph';
 import { focusTables, selectTable, toggleExpanded, useScene } from '../state/scene';
 import { neighbours } from '../schema/graph';
 import { SEVERITY_COLOR } from '../scene/WarningBadges';
+import { tip } from './Tooltip';
 
 export function Inspector({ compact }: { compact: boolean }) {
   const schema = useScene((s) => s.schema);
@@ -37,18 +38,19 @@ export function Inspector({ compact }: { compact: boolean }) {
             {formatRows(rows)} rows · {table.columns.length} columns · {table.indexes.length} indexes
           </p>
         </div>
-        <button onClick={() => selectTable(null)} aria-label="Close the table details" className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-white/5 hover:text-white">
+        <button onClick={() => selectTable(null)} aria-label="Close the table details" {...tip('Close', 'Lets go of the selection.', 'deselect')} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-white/5 hover:text-white">
           <X className="h-4 w-4" />
         </button>
       </div>
 
       <div className="flex gap-1.5 px-4 pb-3">
-        <button onClick={() => toggleExpanded(table.name)} className="flex h-9 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 text-[12.5px] font-medium text-slate-200 hover:bg-white/5">
+        <button onClick={() => toggleExpanded(table.name)} {...tip(expanded ? 'Fold the table' : 'Unfold the table', 'Show or hide the column list on this table in the scene.', 'fold')} className="flex h-9 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 text-[12.5px] font-medium text-slate-200 hover:bg-white/5">
           {expanded ? <ChevronsDownUp className="h-4 w-4" /> : <ChevronsUpDown className="h-4 w-4" />}
           {expanded ? 'Fold' : 'Unfold'}
         </button>
         <button
           onClick={() => focusTables(neighbours(schema, [table.name], 1), `${table.name} + neighbours`)}
+          {...tip('Isolate dependencies', 'Light this table and every table one relationship away; dim the rest.', 'deps')}
           className="flex h-9 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 text-[12.5px] font-medium text-slate-200 hover:bg-white/5"
         >
           <ScanEye className="h-4 w-4" />

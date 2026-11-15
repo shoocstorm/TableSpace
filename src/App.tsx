@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from 'react';
+import { useSettings } from './state/settings';
 import { autoload } from './llm/engine';
 import { useIntro } from './scene/intro';
 import { Viewport } from './scene/Viewport';
@@ -15,6 +16,9 @@ import { ImportDialog } from './ui/ImportDialog';
 import { Inspector } from './ui/Inspector';
 import { Intro } from './ui/Intro';
 import { ResultDialog } from './ui/ResultDialog';
+import { SettingsDialog } from './ui/SettingsDialog';
+import { useShortcuts } from './ui/shortcuts';
+import { tip, TooltipLayer } from './ui/Tooltip';
 import { TopBar } from './ui/TopBar';
 import { usePhone } from './ui/usePhone';
 
@@ -38,7 +42,7 @@ function Health() {
         setDrawer(true);
         void send('Full anti-pattern radar', { tool: 'audit_schema', args: { rule: 'all' } });
       }}
-      title="Run the audit"
+      {...tip('Schema health', '100 means the audit finds nothing; each finding takes points off by severity. Click to run the full audit with the AI Architect.')}
       className="glass mb-2 flex items-center gap-2.5 rounded-xl py-1.5 pl-2 pr-3 text-left hover:border-white/25"
     >
       <span className="grid h-9 w-9 place-items-center rounded-full font-mono text-[12px] font-semibold" style={{ color, background: `conic-gradient(${color} ${score * 3.6}deg, #1e2c46 0)` }}>
@@ -66,6 +70,7 @@ function Legend() {
         <button
           key={d.id}
           onClick={() => focusTables(tablesOfDomain(schema, d.id), d.label)}
+          {...tip(`Isolate ${d.label}`, 'Light this domain’s tables and dim the rest. Reset brings everything back.')}
           className="flex h-7 items-center gap-2 rounded-lg px-1.5 text-left text-[12.5px] text-slate-300 hover:bg-white/6 hover:text-white"
         >
           <span className="h-2.5 w-2.5 rounded-sm" style={{ background: d.color, boxShadow: `0 0 10px ${d.color}88` }} />
@@ -90,25 +95,15 @@ function Legend() {
 export default function App() {
   const phone = usePhone();
   const drawerOpen = useUi((s) => s.drawerOpen);
-  const setPalette = useUi((s) => s.setPalette);
   const selected = useScene((s) => s.selected);
   const intro = useIntro((s) => s.phase);
 
   useEffect(() => {
     // a model used before loads again from the browser's cache; nothing is downloaded unasked
-    void autoload();
+    void autoload(useSettings.getState().autoload);
   }, []);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        setPalette(!useUi.getState().paletteOpen);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [setPalette]);
+  useShortcuts();
 
   // The scene keeps to the space the drawer leaves, so what the agent points at is never under it.
   const stage = phone ? { bottom: drawerOpen ? 'var(--sheet-h)' : 0 } : { right: drawerOpen ? 'var(--drawer-w)' : 0 };
@@ -130,6 +125,8 @@ export default function App() {
       <CommandPalette />
       <ImportDialog />
       <ResultDialog />
+      <SettingsDialog />
+      <TooltipLayer />
       <Intro />
     </div>
   );

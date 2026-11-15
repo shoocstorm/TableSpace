@@ -9,6 +9,7 @@
     "preview": "bun --bun vite preview",
     "typecheck": "bun --bun tsc --noEmit",
     "test": "vitest run",
+    "demo:video": "node scripts/record-demo.mjs",
     "deploy:web": "bun run build && firebase deploy --only hosting",
     "postinstall": "bun scripts/copy-wllama.mjs"
   },
@@ -32,6 +33,7 @@
     "@types/react-dom": "19.3.0",
     "@types/three": "0.187.0",
     "@vitejs/plugin-react": "6.1.1",
+    "playwright-core": "^1.65.1",
     "tailwindcss": "4.3.5",
     "typescript": "7.0.2",
     "vite": "8.3.5",

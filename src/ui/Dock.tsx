@@ -3,22 +3,23 @@
 // names whatever the agent has put in the scene, each with a way to dismiss it.
 
 import { Check, Expand, Ghost, Mountain, RotateCcw, ScanEye, Search, Shrink, Tag, X } from 'lucide-react';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { ENVIRONMENTS } from '../scene/environments';
 import { clearBadges, clearFocus, clearGhosts, clearTrace, clearWhatIf, resetView, toggleExploded, toggleXray, useScene } from '../state/scene';
 import { useUi } from '../state/ui';
-import { shortcut } from './usePhone';
+import { tip } from './Tooltip';
 
-function DockButton({ label, hint, active, disabled, onClick, children }: { label: string; hint?: string; active?: boolean; disabled?: boolean; onClick: () => void; children: ReactNode }) {
+/** `keys` is a shortcut id (ui/shortcuts.ts). A disabled button still explains itself, so it stays hoverable. */
+function DockButton({ label, title, hint, keys, active, disabled, onClick, children }: { label: string; title?: string; hint: string; keys?: string; active?: boolean; disabled?: boolean; onClick: () => void; children: ReactNode }) {
   return (
     <button
-      onClick={onClick}
-      disabled={disabled}
+      onClick={() => !disabled && onClick()}
+      aria-disabled={disabled}
       aria-pressed={active}
       aria-label={label}
-      title={hint ? `${label} (${hint})` : label}
-      className={`group flex h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-xl px-2.5 transition-colors disabled:cursor-not-allowed disabled:opacity-35 sm:min-w-[68px] ${
-        active ? 'bg-cyan-400/15 text-cyan-300' : 'text-slate-300 hover:bg-white/6 hover:text-white'
+      {...tip(title ?? label, hint, keys)}
+      className={`group flex h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-xl px-2.5 transition-colors sm:min-w-[68px] ${
+        disabled ? 'cursor-not-allowed opacity-35' : active ? 'bg-cyan-400/15 text-cyan-300' : 'text-slate-300 hover:bg-white/6 hover:text-white'
       }`}
     >
       {children}
@@ -32,7 +33,7 @@ function Pill({ color, children, onDismiss, label }: { color: string; children: 
     <span className="glass rise flex h-8 max-w-full items-center gap-2 rounded-full pl-3 pr-1 text-[12px] font-medium text-slate-200">
       <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
       <span className="truncate">{children}</span>
-      <button onClick={onDismiss} aria-label={label} className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-slate-400 hover:bg-white/10 hover:text-white">
+      <button onClick={onDismiss} aria-label={label} {...tip(label)} className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-slate-400 hover:bg-white/10 hover:text-white">
         <X className="h-3.5 w-3.5" />
       </button>
     </span>
@@ -62,7 +63,7 @@ function EnvironmentPicker({ onClose }: { onClose: () => void }) {
           {ENVIRONMENTS.map((e) => {
             const on = e.id === env;
             return (
-              <button key={e.id} onClick={() => setEnv(e.id)} aria-pressed={on} title={e.blurb} className={`group overflow-hidden rounded-xl border text-left transition-colors ${on ? 'border-cyan-300/80' : 'border-white/10 hover:border-white/30'}`}>
+              <button key={e.id} onClick={() => setEnv(e.id)} aria-pressed={on} className={`group overflow-hidden rounded-xl border text-left transition-colors ${on ? 'border-cyan-300/80' : 'border-white/10 hover:border-white/30'}`}>
                 <span className="relative block h-14" style={{ background: e.swatch }}>
                   {on && (
                     <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-cyan-300 text-slate-950">
@@ -84,7 +85,8 @@ function EnvironmentPicker({ onClose }: { onClose: () => void }) {
 }
 
 export function Dock() {
-  const [picking, setPicking] = useState(false);
+  const picking = useUi((s) => s.envOpen);
+  const setPicking = useUi((s) => s.setEnvOpen);
   const xray = useScene((s) => s.xray);
   const exploded = useScene((s) => s.exploded);
   const ghosts = useScene((s) => s.ghosts.length);
@@ -134,26 +136,33 @@ export function Dock() {
       {picking && <EnvironmentPicker onClose={() => setPicking(false)} />}
 
       <nav aria-label="Scene controls" className="glass pointer-events-auto flex items-center gap-0.5 rounded-2xl p-1">
-        <DockButton label="Reset" hint="show the whole schema" onClick={resetView}>
+        <DockButton label="Reset" title="Reset the view" hint="Show the whole schema again and drop the focus and any running trace." keys="reset" onClick={resetView}>
           <RotateCcw className="h-[18px] w-[18px]" />
         </DockButton>
-        <DockButton label="X-ray" hint="dim unrelated tables" active={xray} onClick={toggleXray}>
+        <DockButton label="X-ray" hint="Dim every table that isn’t related to the one you select, so its dependencies stand out." keys="xray" active={xray} onClick={toggleXray}>
           <ScanEye className="h-[18px] w-[18px]" />
         </DockButton>
-        <DockButton label={exploded ? 'Collapse' : 'Explode'} hint="pull the domains apart" active={exploded} onClick={toggleExploded}>
+        <DockButton label={exploded ? 'Collapse' : 'Explode'} hint={exploded ? 'Bring the domains back together.' : 'Pull the domains apart so each cluster of tables can be read by itself.'} keys="explode" active={exploded} onClick={toggleExploded}>
           {exploded ? <Shrink className="h-[18px] w-[18px]" /> : <Expand className="h-[18px] w-[18px]" />}
         </DockButton>
-        <DockButton label="Labels" hint="name each relationship on its line" active={labels} onClick={toggleLabels}>
+        <DockButton label="Labels" title="Relationship labels" hint="Name each relationship on its line: which column references which key." keys="labels" active={labels} onClick={toggleLabels}>
           <Tag className="h-[18px] w-[18px]" />
         </DockButton>
-        <DockButton label={ghosts ? `Ghosts ${ghosts}` : 'Ghosts'} hint="clear the AI's ghost previews" disabled={!ghosts} onClick={clearGhosts}>
+        <DockButton
+          label={ghosts ? `Ghosts ${ghosts}` : 'Ghosts'}
+          title="Clear ghost tables"
+          hint={ghosts ? 'Remove the refactor previews the AI Architect floated in the scene.' : 'Nothing to clear. Ghost tables appear when you ask the AI Architect to normalize a table: a preview, never a change.'}
+          keys="ghosts"
+          disabled={!ghosts}
+          onClick={clearGhosts}
+        >
           <Ghost className="h-[18px] w-[18px]" />
         </DockButton>
-        <DockButton label="World" hint="choose the environment" active={picking} onClick={() => setPicking((v) => !v)}>
+        <DockButton label="World" hint="Choose the environment the schema floats in." keys="world" active={picking} onClick={() => setPicking(!picking)}>
           <Mountain className="h-[18px] w-[18px]" />
         </DockButton>
         <span className="mx-1 h-7 w-px bg-white/10" />
-        <DockButton label="Search" hint={shortcut('K')} onClick={() => setPalette(true)}>
+        <DockButton label="Search" title="Search tables" hint="Type part of a table or column name, press Enter, and the camera flies there." keys="search" onClick={() => setPalette(true)}>
           <Search className="h-[18px] w-[18px]" />
         </DockButton>
       </nav>

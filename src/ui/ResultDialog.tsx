@@ -114,7 +114,7 @@ function Body({ result, sql, onClose }: { result: ResultSet; sql?: string; onClo
         )}
 
         <div className="flex flex-wrap items-center gap-2 px-4 pb-3 sm:px-5">
-          <label className="flex h-9 min-w-[180px] basis-full items-center gap-2 rounded-lg border border-white/10 bg-black/25 px-2.5 focus-within:border-cyan-400/50 sm:max-w-[320px] sm:flex-1 sm:basis-auto">
+          <label className="flex h-9 min-w-[180px] basis-full items-center gap-2 rounded-lg border border-white/10 bg-black/25 px-2.5 transition-colors focus-within:bg-black/45 sm:max-w-[320px] sm:flex-1 sm:basis-auto">
             <Search className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
             <input
               ref={searchBox}

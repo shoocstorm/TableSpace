@@ -48,8 +48,21 @@ const tryIndex = (table: string, column: string): Suggestion => ({ label: `What 
 /** Up to two slow steps of a plan that an index would fix. */
 const indexIdeas = (steps: PlanStep[]): Suggestion[] => steps.filter((s) => s.slow && s.via).slice(0, 2).map((s) => tryIndex(s.table, s.via!));
 
+/**
+ * How far a tool reaches. None of them can change a database: there is no connection to one.
+ * - view: moves the camera and the highlight, nothing else.
+ * - analyze: reads the schema and works something out; what it shows is a report.
+ * - preview: adds something pretend to the scene (ghost tables, a what-if index, mock rows), kept in memory until dismissed.
+ */
+export type ToolEffect = 'view' | 'analyze' | 'preview';
+
 export type Tool = {
   name: ToolName;
+  effect: ToolEffect;
+  /** What running it leaves in the scene, and how to take that away again. Shown to the user. */
+  leaves: string;
+  /** Requests that reach this tool, as a user would type them. {t} is a table, {p} its parent, {fk} the column joining them, {d} a domain, {q} a named query. */
+  examples: string[];
   /** One line for the model's tool list. */
   description: string;
   /** Shown on the chip while the tool runs. */
@@ -104,6 +117,9 @@ const list = (items: string[], max = 6) => (items.length > max ? `${items.slice(
 export const TOOLS: Tool[] = [
   {
     name: 'focus_tables',
+    effect: 'view',
+    leaves: "Lights the tables it found, dims the rest and flies the camera there. Take it away with the Focus pill above the dock, or Reset.",
+    examples: ["show {t}", "how do {t} and {p} relate?", "show the {d} domain"],
     label: 'Flying to tables',
     description: 'Show, find, locate or explain tables or a whole domain: flies the camera there, highlights them and dims the rest.',
     schema: (s) => ({
@@ -139,6 +155,9 @@ export const TOOLS: Tool[] = [
   },
   {
     name: 'write_sql',
+    effect: 'analyze',
+    leaves: "Shows a SELECT built by code from a checked description, runs it on invented rows in this browser, and traces its plan across the tables. Take the trace away with its pill, or Reset.",
+    examples: ["count {t} per {p}", "list the 10 latest {t}", "write a query for {t} with their {p}"],
     label: 'Writing SQL',
     description: 'Write, generate or give the SQL for a question about the data: list, find, count, total, average, top or latest rows, with filters. Shows the query, what was checked, and traces it.',
     schema: (s) => ({ type: 'object', properties: { tables: { type: 'array', items: { type: 'string', enum: names(s) }, maxItems: 4, description: 'the tables the question is about, the main one first' } }, required: ['tables'] }),
@@ -203,6 +222,9 @@ export const TOOLS: Tool[] = [
   },
   {
     name: 'what_if_index',
+    effect: 'preview',
+    leaves: "Adds a pretend index to the schema held in memory, then re-runs the audit and the traced plan with it. Take it away with the what-if pill above the dock.",
+    examples: ["what if {t}.{fk} were indexed?", "try an index on every foreign key that lacks one"],
     label: 'Trying an index',
     description: 'Add, create or try an index on a column (what if it were indexed?): re-plans the traced query and re-runs the audit with the index in place, without changing the database.',
     schema: (s) => ({ type: 'object', properties: { columns: { type: 'array', items: { type: 'string', enum: s.tables.flatMap((t) => t.columns.filter((c) => !c.pk).map((c) => `${t.name}.${c.name}`)) }, maxItems: 4, description: 'the columns to index, as table.column' } }, required: ['columns'] }),
@@ -236,6 +258,9 @@ export const TOOLS: Tool[] = [
   },
   {
     name: 'trace_query',
+    effect: 'analyze',
+    leaves: "Animates the query's join order along the relationship lines and marks slow scans red. The plan is simulated from row counts and indexes; no query is sent anywhere. Take it away with the trace pill, or Reset.",
+    examples: ["trace the {q} query", "why is this slow?  + a pasted SELECT … JOIN …"],
     label: 'Tracing the query',
     description: 'Simulate, trace, explain or run a SQL query or a named flow (like checkout): animates its join order across the tables and marks slow scans red.',
     schema: (s) => ({ type: 'object', properties: { preset: { type: 'string', enum: s.presets.length ? s.presets.map((p) => p.id) : ['none'], description: 'the named query closest to the request' } }, required: ['preset'] }),
@@ -267,6 +292,9 @@ export const TOOLS: Tool[] = [
   },
   {
     name: 'propose_refactor',
+    effect: 'preview',
+    leaves: "Floats the proposed tables as ghosts beside the original and writes migration SQL for you to copy. Nothing is applied. Take the ghosts away with the Ghosts button on the dock.",
+    examples: ["normalize {t}", "split the bloated tables", "extract lookup tables from {p}"],
     label: 'Drafting ghost tables',
     description: 'Normalize, split, refactor or clean up a bloated table: previews the new tables as ghosts beside it and writes the migration SQL.',
     schema: (s) => ({
@@ -297,6 +325,9 @@ export const TOOLS: Tool[] = [
   },
   {
     name: 'audit_schema',
+    effect: 'analyze',
+    leaves: "Pins a warning badge on each table with a finding and lists them. Take the badges away with the warnings pill above the dock.",
+    examples: ["audit the schema", "any missing indexes?", "are any tables unused?"],
     label: 'Auditing the schema',
     description: 'Audit, check or review the schema for problems: missing foreign-key indexes, orphaned tables, God tables. Pins warning badges on the tables.',
     schema: () => ({ type: 'object', properties: { rule: { type: 'string', enum: ['all', ...AUDIT_RULES], description: 'one rule, or all' } }, required: ['rule'] }),
@@ -324,6 +355,9 @@ export const TOOLS: Tool[] = [
   },
   {
     name: 'seed_data',
+    effect: 'preview',
+    leaves: "Fills the tables with invented rows, parents before children, held in memory; row counts in the scene go up. They are gone when you switch database or reload.",
+    examples: ["seed mock data", "generate lots of test data for {t}"],
     label: 'Seeding mock data',
     description: 'Seed, generate, insert or populate realistic mock data, parents before children, and animate the tables filling up.',
     schema: (s) => ({ type: 'object', properties: { scope: { type: 'string', enum: ['all', ...s.domains.map((d) => d.id)], description: 'everything, or one domain' }, size: { type: 'string', enum: SEED_SIZES } }, required: ['scope', 'size'] }),
@@ -343,6 +377,9 @@ export const TOOLS: Tool[] = [
   },
   {
     name: 'reset_view',
+    effect: 'view',
+    leaves: "Shows the whole schema again and removes highlights, traces, badges, ghosts and what-if indexes.",
+    examples: ["reset the view", "zoom out", "show everything"],
     label: 'Resetting the view',
     description: 'Reset, clear or zoom out: shows the whole database again and removes highlights, traces, badges and ghosts.',
     schema: () => ({ type: 'object', properties: {}, required: [] }),

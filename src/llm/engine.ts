@@ -381,10 +381,11 @@ export async function* chat(messages: ChatMessage[], opts: { temperature: number
   }
 }
 
-/** Loads the model used last, if it is still downloaded. Never downloads by itself. */
-export async function autoload(): Promise<void> {
+/** Loads the model used last, if it is still downloaded. Never downloads by itself. With `load` false (switched off in Settings) it only lists what is downloaded. */
+export async function autoload(load = true): Promise<void> {
   const crashed = checkCrashedLoad();
   await refreshCache();
+  if (!load) return;
   const def = modelById(readLast());
   if (def && def.id !== crashed && (!device.mobile || def.phone) && useEngine.getState().cached[def.url]) await loadModel(def.id);
 }

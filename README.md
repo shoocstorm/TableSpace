@@ -7,6 +7,12 @@ A SQL schema as a 3D space you can fly through, with a local AI data architect t
 - **Layout is force-directed** (`d3-force-3d`): related tables and tables of a domain cluster together.
 - **The AI drawer** drives the scene with seven tools: focus tables, write SQL for a question, trace a query, propose a refactor (ghost tables + migration SQL), audit for anti-patterns (3D badges), seed mock data in dependency order, and reset the view.
 
+## Demo video
+
+[`docs/demo.mp4`](docs/demo.mp4) is a tour of the app: the opening, orbiting, a table up close, following a foreign key, X-ray, labels, the exploded view, the AI architect (a query trace, an audit, a refactor as ghost tables, seeding) and the environments.
+
+It is recorded by a script, so it can be made again after the app changes: `bun run demo:video` starts the dev server, drives the tour in headless Chrome and encodes the frames with ffmpeg (both must be installed). The tour is the `tour` function in `scripts/record-demo.mjs`; `--fps`, `--crf`, `--width`, `--height`, `--out` and `--url` change the output.
+
 ## Run it
 
 ```bash
@@ -39,7 +45,32 @@ Small local models can't be trusted to write tool calls free-form, so they don't
 3. **Run.** The tool does its work deterministically and changes the 3D scene.
 4. **Explain.** The model streams a short explanation from the tool's facts.
 
-A keyword router backs this up: when the model says `answer` to a request that plainly matches a tool, or a step fails, the match is used. Each answer shows who chose the tool (*chosen by the model*, *keyword match*, or *prompt chip*).
+A keyword router backs this up: when the model says `answer` to a request that plainly matches a tool, or a step fails, the match is used.
+
+### Seeing what the agent does
+
+Nothing the agent does is hidden. The drawer has three tabs:
+
+- **Chat.** Every answer carries its steps: the tool chosen, the arguments, the run, the explanation. Each step is marked with who decided it (`model`, `keywords`, `you` for a one-click prompt, or `code`), how long it took, and unfolds to the exact prompt sent to the model and its raw reply. A line under the message box says what the agent is doing at that moment.
+- **Profile** (`P`). The model and where it runs, what leaves the device (nothing), what the agent has put in the scene with a way to remove each thing, the rules the loop enforces, what it cannot do, the schema summary it is given, its four prompts word for word, and a log of the session.
+- **Tools** (`T`). The eight tools, read from the registry the agent itself uses: what each leaves in the scene and how to undo it, the description the model is given, the arguments with their allowed values for the active database, and a button to run it.
+
+Settings → AI Architect decides how much the model is allowed to do: choose the tool (or leave that to the keyword rules), explain results (or show the tool's own summary), unfold the steps by default, suggest follow-ups, and reload the last model at startup.
+
+## Keyboard
+
+Hover or tab to any control for a tooltip with its name, its key and what it is for. Press `?` for the full list (Settings → Shortcuts), where single-key shortcuts can also be switched off.
+
+| Key | Does |
+| --- | --- |
+| `⌘K` / `Ctrl+K` | Search tables and columns |
+| `R` · `X` · `E` · `L` · `W` | Reset the view · X-ray · explode · relationship labels · world |
+| `F` · `D` · `Esc` | With a table selected: fold or unfold it · isolate its dependencies · deselect |
+| `G` | Clear the ghost tables |
+| `/` · `A` | Ask the AI Architect · show or hide its drawer |
+| `1`…`7` | Run a one-click prompt |
+| `P` · `T` · `M` | The agent's profile · its tools · the local model menu |
+| `I` · `,` · `?` | Import a schema · settings · shortcuts |
 
 ## Reading the scene
 
@@ -126,7 +157,7 @@ Measured in headless Chrome emulating an iPhone (its user agent and screen, the 
 
 ## What was checked
 
-- `bun run test`: 61 unit tests over the graph, layout, audit, SQL reader, plan simulation, query builder, refactor proposals, seeding, grammar and router. Every generated query in the tests is read back and planned, and every pair of connected tables in both schemas is joined and parsed.
+- `bun run test`: 106 unit tests over the graph, layout, audit, SQL reader, plan simulation, query builder, refactor proposals, seeding, grammar, router and the steps a turn reports (the model's side of those is a stand-in). Every generated query in the tests is read back and planned, and every pair of connected tables in both schemas is joined and parsed.
 - The production build under `bun run preview`, in headless Chrome at 1440×900 and 390×844 (emulated phone): cross-origin isolated, service worker registered, no console errors or CSP violations; every chip, typed SQL, search, the second schema and the exploded view were looked at in screenshots.
 - Qwen3 0.6B loaded in Chrome on a Mac (WebGPU, 29/29 layers, about 125 tok/s) and answered free-form prompts through the agent loop, including seven SQL requests whose output was read by hand. Generated SQL was not run against a real PostgreSQL.
 
@@ -141,6 +172,6 @@ src/analysis/   audit, SQL reader, plan simulation, query builder, refactor prop
 src/scene/      React Three Fiber components
 src/agent/      tools, grammars, prompts, keyword router, the turn
 src/llm/        wllama engine, model catalog, device load plans, sha256           (ported from Andai)
-src/state/      zustand stores: scene, chat, ui
-src/ui/         top bar, dock, command palette, inspector, AI drawer
+src/state/      zustand stores: scene, chat, ui, settings
+src/ui/         top bar, dock, command palette, inspector, AI drawer (chat, steps, profile, tools), settings, shortcuts, tooltips
 ```

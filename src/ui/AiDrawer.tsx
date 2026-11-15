@@ -2,49 +2,24 @@
 // a panel on the right; on a phone a sheet over the lower part of the screen,
 // so the scene it controls stays visible above it.
 
-import { ArrowUp, Check, Copy, CornerDownRight, LoaderCircle, Maximize2, Play, Sparkles, Square, Trash2, TriangleAlert, X } from 'lucide-react';
+import { ArrowUp, Check, Copy, CornerDownRight, LoaderCircle, Maximize2, MessageSquare, Play, ShieldCheck, Sparkles, Square, Trash2, TriangleAlert, UserRound, Wrench, X } from 'lucide-react';
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { RULE_LABEL } from '../analysis/audit';
 import type { PlanStep } from '../analysis/plan';
-import type { Block, ToolCall } from '../agent/tools';
+import { chipsFor } from '../agent/chips';
+import { TOOLS, type Block } from '../agent/tools';
 import { MODELS, useEngine } from '../llm/engine';
-import { edgesOf, formatRows } from '../schema/graph';
-import type { SchemaDef } from '../schema/types';
+import { formatRows } from '../schema/graph';
 import { scanColor } from '../scene/QueryPulses';
 import { SEVERITY_COLOR } from '../scene/WarningBadges';
 import { clearChat, send, stop, useChat, type Message } from '../state/chat';
 import { ghostPositions } from '../scene/Ghosts';
 import { focusTables, positionsOf, selectTable, startTrace, useScene } from '../state/scene';
-import { useUi } from '../state/ui';
-
-type Chip = { label: string; call: ToolCall };
-
-/** A count worth asking for in any schema: the rows of the largest child table, per row of its parent. */
-function sqlChip(schema: SchemaDef): Chip | null {
-  const rows = (name: string) => schema.tables.find((t) => t.name === name)?.rows ?? 0;
-  const edge = edgesOf(schema)
-    .filter((e) => e.cardinality === '1:N' && e.from !== e.to)
-    .sort((a, b) => rows(b.from) - rows(a.from))[0];
-  if (!edge) return null;
-  const one = edge.to.replace(/ies$/, 'y').replace(/s$/, '').replace(/_/g, ' ');
-  return { label: `Write SQL: count ${edge.from.replace(/_/g, ' ')} per ${one}`, call: { tool: 'write_sql', args: { tables: [edge.from, edge.to] }, useText: true } };
-}
-
-/** One-click prompts for the active database. Each names its tool outright, so a chip never depends on a guess. */
-export function chipsFor(schema: SchemaDef): Chip[] {
-  const preset = schema.presets[0];
-  const domain = schema.domains[Math.min(3, schema.domains.length - 1)];
-  const sql = sqlChip(schema);
-  return [
-    { label: 'Audit missing indexes', call: { tool: 'audit_schema', args: { rule: 'missing_fk_index' } } },
-    ...(preset ? [{ label: `Simulate ${preset.id.replace(/_/g, ' ')} join`, call: { tool: 'trace_query' as const, args: { preset: preset.id } } }] : []),
-    ...(sql ? [sql] : []),
-    { label: 'Normalize bloated tables', call: { tool: 'propose_refactor', args: { table: 'auto', strategy: 'auto' } } },
-    { label: 'Full anti-pattern radar', call: { tool: 'audit_schema', args: { rule: 'all' } } },
-    { label: `Show the ${domain.label.toLowerCase()} domain`, call: { tool: 'focus_tables', args: { domain: domain.id, tables: [], hops: '0' } } },
-    { label: 'Seed mock data', call: { tool: 'seed_data', args: { scope: 'all', size: 'small' } } },
-  ];
-}
+import { useSettings } from '../state/settings';
+import { useUi, type DrawerTab } from '../state/ui';
+import { ProfileTab, ToolsTab } from './AgentDossier';
+import { StepsView } from './AgentSteps';
+import { Keys, tip } from './Tooltip';
 
 /** Bold, inline code and line breaks: all the formatting answers use. Rendered as elements, never as HTML. */
 function Rich({ text }: { text: string }) {
@@ -131,14 +106,14 @@ function BlockView({ block }: { block: Block }) {
                 {total.toLocaleString('en-US')} row{total === 1 ? '' : 's'} · {scanned.toLocaleString('en-US')} read
               </span>
               {rows.length > 0 && (
-                <button onClick={open} title="Open the result as a table: sort, filter, export" className="ml-1 flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-cyan-400/30 bg-cyan-400/[0.07] px-2 font-sans text-[12px] font-medium text-cyan-100 hover:border-cyan-300/60 hover:bg-cyan-400/15">
+                <button onClick={open} {...tip('Open as a table', 'Sort, filter, hide columns and export the rows.')} className="ml-1 flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-cyan-400/30 bg-cyan-400/[0.07] px-2 font-sans text-[12px] font-medium text-cyan-100 hover:border-cyan-300/60 hover:bg-cyan-400/15">
                   <Maximize2 className="h-3.5 w-3.5" /> Open table
                 </button>
               )}
             </span>
           </div>
           {rows.length ? (
-            <div className="thin-scroll mt-1 cursor-pointer overflow-x-auto" onClick={open} title="Open the result as a table">
+            <div className="thin-scroll mt-1 cursor-pointer overflow-x-auto" onClick={open}>
               <table className="w-max min-w-full font-mono text-[11.5px]">
                 <thead>
                   <tr className="border-y border-white/8 bg-white/[0.03] text-left text-slate-400">
@@ -190,7 +165,7 @@ function BlockView({ block }: { block: Block }) {
                   <div className="text-[11.5px] text-slate-400">rows read</div>
                   <div className="mt-1.5 flex gap-1">
                     {steps.map((s, i) => (
-                      <span key={i} title={`${s.table}: ${s.note}`} className="h-1.5 flex-1 rounded-full" style={{ background: scanColor(s) }} />
+                      <span key={i} {...tip(s.table, s.note)} className="h-1.5 flex-1 rounded-full" style={{ background: scanColor(s) }} />
                     ))}
                   </div>
                 </div>
@@ -245,7 +220,7 @@ function BlockView({ block }: { block: Block }) {
           <div className="mb-2 flex items-center justify-between">
             <span className="label">Simulated plan · {block.steps.length} steps</span>
             {!live && (
-              <button onClick={() => startTrace({ label: block.label, sql: block.sql, steps: block.steps })} className="flex h-7 items-center gap-1 rounded-lg border border-white/10 px-2 text-[11.5px] text-slate-300 hover:text-white">
+              <button onClick={() => startTrace({ label: block.label, sql: block.sql, steps: block.steps })} {...tip('Replay the trace', 'Animate this plan across the tables again.')} className="flex h-7 items-center gap-1 rounded-lg border border-white/10 px-2 text-[11.5px] text-slate-300 hover:text-white">
                 <Play className="h-3 w-3" /> Replay
               </button>
             )}
@@ -309,9 +284,8 @@ function BlockView({ block }: { block: Block }) {
   }
 }
 
-const BY: Record<NonNullable<Message['tool']>['by'], string> = { model: 'chosen by the model', scripted: 'keyword match', chip: 'prompt chip' };
-
 function MessageView({ m, last, busy }: { m: Message; last: boolean; busy: boolean }) {
+  const followUps = useSettings((s) => s.followUps);
   if (m.role === 'user') {
     return (
       <div className="rise flex justify-end">
@@ -322,26 +296,20 @@ function MessageView({ m, last, busy }: { m: Message; last: boolean; busy: boole
   const working = m.status === 'working';
   return (
     <div className="rise space-y-2">
-      {m.tool && (
-        <div className="flex items-center gap-2 text-[12px] text-slate-400">
-          {m.tool.done ? m.tool.ok ? <Check className="h-3.5 w-3.5 text-emerald-300" /> : <TriangleAlert className="h-3.5 w-3.5 text-amber-300" /> : <LoaderCircle className="h-3.5 w-3.5 animate-spin text-cyan-300" />}
-          <span className="font-mono text-slate-200">{m.tool.name}</span>
-          <span className="text-slate-500">· {m.tool.done ? BY[m.tool.by] : `${m.tool.label}…`}</span>
-        </div>
-      )}
+      <StepsView m={m} />
       {(m.text || working) && (
         <div className={`space-y-2 text-[14px] leading-relaxed ${m.status === 'error' ? 'text-rose-200' : 'text-slate-300'}`}>
-          {m.text ? <Rich text={m.text} /> : !m.tool && <span className="text-slate-500">Thinking…</span>}
+          {m.text ? <Rich text={m.text} /> : !m.steps.length && <span className="text-slate-500">Thinking…</span>}
           {working && m.text && <span className="blink inline-block h-3.5 w-1.5 translate-y-0.5 bg-cyan-300" aria-hidden />}
         </div>
       )}
       {m.blocks.map((b, i) => (
         <BlockView key={i} block={b} />
       ))}
-      {last && !busy && m.next && m.next.length > 0 && (
+      {last && !busy && followUps && m.next && m.next.length > 0 && (
         <div className="flex flex-wrap gap-1.5 pt-0.5">
           {m.next.map((n) => (
-            <button key={n.label} onClick={() => void send(n.label, n.call)} className="flex min-h-8 items-center gap-1.5 rounded-full border border-violet-300/30 bg-violet-400/[0.08] px-3 py-1 text-left text-[12.5px] font-medium text-violet-100 hover:border-violet-200/60 hover:bg-violet-400/15">
+            <button key={n.label} onClick={() => void send(n.label, n.call)} {...tip('A suggested next step', 'Runs this tool directly. Switch these off in Settings.')} className="flex min-h-8 items-center gap-1.5 rounded-full border border-violet-300/30 bg-violet-400/[0.08] px-3 py-1 text-left text-[12.5px] font-medium text-violet-100 hover:border-violet-200/60 hover:bg-violet-400/15">
               <CornerDownRight className="h-3.5 w-3.5 shrink-0" aria-hidden />
               {n.label}
             </button>
@@ -349,12 +317,13 @@ function MessageView({ m, last, busy }: { m: Message; last: boolean; busy: boole
         </div>
       )}
       {m.status === 'stopped' && <div className="label">stopped</div>}
-      {m.status === 'done' && m.tokPerSec != null && <div className="label">{m.tokPerSec.toFixed(0)} tok/s · on this device</div>}
+      {m.status === 'done' && m.tokPerSec != null && <div className="label">written by the model · {m.tokPerSec.toFixed(0)} tok/s · on this device</div>}
     </div>
   );
 }
 
 function Empty({ scripted, children }: { scripted: boolean; children: ReactNode }) {
+  const showDrawer = useUi((s) => s.showDrawer);
   return (
     <div className="px-1 pt-2">
       <div className="mb-3 grid h-11 w-11 place-items-center rounded-2xl border border-cyan-400/25 bg-cyan-400/10">
@@ -363,6 +332,17 @@ function Empty({ scripted, children }: { scripted: boolean; children: ReactNode 
       <h3 className="font-display text-lg font-semibold text-slate-50">Ask about this database</h3>
       <p className="mt-1 text-[13.5px] leading-relaxed text-slate-400">
         The architect acts on the 3D scene: it flies the camera, traces queries along the relationship lines, pins warnings on tables and previews refactors as ghost tables.
+      </p>
+      <p className="mt-2 text-[12.5px] leading-relaxed text-slate-500">
+        It works through {TOOLS.length} tools and cannot touch a real database. See{' '}
+        <button onClick={() => showDrawer('profile')} className="text-cyan-300 underline decoration-cyan-300/30 underline-offset-2 hover:text-cyan-100">
+          what it is
+        </button>{' '}
+        and{' '}
+        <button onClick={() => showDrawer('tools')} className="text-cyan-300 underline decoration-cyan-300/30 underline-offset-2 hover:text-cyan-100">
+          what it can do
+        </button>
+        .
       </p>
       {scripted && (
         <p className="mt-3 rounded-xl border border-amber-300/20 bg-amber-300/[0.06] p-3 text-[12.5px] leading-snug text-amber-100/90">
@@ -374,22 +354,62 @@ function Empty({ scripted, children }: { scripted: boolean; children: ReactNode 
   );
 }
 
+const TABS: { id: DrawerTab; label: string; icon: ReactNode; desc: string; keys?: string }[] = [
+  { id: 'chat', label: 'Chat', icon: <MessageSquare className="h-3.5 w-3.5" />, desc: 'Ask, and watch each answer’s steps.', keys: 'ask' },
+  { id: 'profile', label: 'Profile', icon: <UserRound className="h-3.5 w-3.5" />, desc: 'What the Architect is: its model, its exact instructions, what it can see, and the rules it follows.', keys: 'profile' },
+  { id: 'tools', label: 'Tools', icon: <Wrench className="h-3.5 w-3.5" />, desc: 'Everything it can do, what each tool leaves in the scene, and how to undo it.', keys: 'tools' },
+];
+
+/** What the agent is doing this moment, and the standing fact that it runs here. */
+function StatusLine() {
+  const busy = useChat((s) => s.busy);
+  const running = useChat((s) => (s.busy ? s.messages[s.messages.length - 1]?.steps.find((x) => x.status === 'running') : undefined));
+  const loading = useEngine((s) => s.status === 'loading');
+  const loaded = useEngine((s) => (s.status === 'ready' ? MODELS.find((m) => m.id === s.loadedId) : undefined));
+  const showDrawer = useUi((s) => s.showDrawer);
+  const text = busy ? `${running?.title ?? 'Working'}…` : loading ? 'Loading the model…' : loaded ? `Idle · ${loaded.name} runs on this device` : 'Idle · scripted mode: keywords, no model';
+  return (
+    <button
+      onClick={() => showDrawer('profile')}
+      {...tip('What the Architect is doing', 'It only acts when you ask. Nothing you type leaves this device. Click for its full profile.', 'profile')}
+      className="flex w-full items-center gap-1.5 px-1 text-left font-mono text-[10.5px] text-slate-500 hover:text-slate-300"
+    >
+      {busy ? <LoaderCircle className="h-3 w-3 shrink-0 animate-spin text-cyan-300" /> : <span className={`mx-[3px] h-1.5 w-1.5 shrink-0 rounded-full ${loaded ? 'bg-emerald-400' : 'bg-amber-300'}`} />}
+      <span className="min-w-0 flex-1 truncate" aria-live="polite">
+        {text}
+      </span>
+      <ShieldCheck className="h-3 w-3 shrink-0 text-emerald-300/80" aria-hidden />
+      <span className="shrink-0">private</span>
+    </button>
+  );
+}
+
 export function AiDrawer({ phone }: { phone: boolean }) {
   const open = useUi((s) => s.drawerOpen);
+  const tab = useUi((s) => s.drawerTab);
+  const showDrawer = useUi((s) => s.showDrawer);
+  const focusNonce = useUi((s) => s.composerFocus);
   const setDrawer = useUi((s) => s.setDrawer);
   const setModels = useUi((s) => s.setModels);
   const messages = useChat((s) => s.messages);
   const busy = useChat((s) => s.busy);
   const schema = useScene((s) => s.schema);
   const loaded = useEngine((s) => (s.status === 'ready' ? MODELS.find((m) => m.id === s.loadedId) : undefined));
+  const hotkeys = useSettings((s) => s.hotkeys);
   const [draft, setDraft] = useState('');
   const scroller = useRef<HTMLDivElement>(null);
+  const composer = useRef<HTMLTextAreaElement>(null);
   const chips = useMemo(() => chipsFor(schema), [schema]);
 
   useEffect(() => {
     const el = scroller.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages]);
+  }, [messages, tab]);
+
+  // the / key (and anything else that asks for the message box)
+  useEffect(() => {
+    if (focusNonce) composer.current?.focus();
+  }, [focusNonce]);
 
   if (!open) return null;
   const submit = () => {
@@ -399,11 +419,12 @@ export function AiDrawer({ phone }: { phone: boolean }) {
   };
   const chipRow = (wrap: boolean) => (
     <div className={wrap ? 'flex flex-wrap gap-2' : 'no-scrollbar -mx-3 flex gap-2 overflow-x-auto px-3'}>
-      {chips.map((c) => (
+      {chips.map((c, i) => (
         <button
           key={c.label}
           disabled={busy}
           onClick={() => void send(c.label, c.call)}
+          {...tip(c.label, `Runs ${c.call.tool} directly: a one-click prompt names its tool, so nothing is guessed.`, hotkeys && !phone ? String(i + 1) : undefined)}
           className="h-9 shrink-0 rounded-full border border-cyan-400/25 bg-cyan-400/[0.07] px-3.5 text-[12.5px] font-medium text-cyan-100 hover:border-cyan-300/60 hover:bg-cyan-400/15 disabled:opacity-40"
         >
           {c.label}
@@ -420,55 +441,91 @@ export function AiDrawer({ phone }: { phone: boolean }) {
       }`}
     >
       {phone && <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-white/15" aria-hidden />}
-      <header className="flex shrink-0 items-center gap-2 border-b border-white/8 px-3.5 py-2.5">
+      <header className="flex shrink-0 items-center gap-2 px-3.5 pb-1.5 pt-2.5">
         <Sparkles className="h-4 w-4 shrink-0 text-cyan-300" aria-hidden />
         <h2 className="font-display shrink-0 whitespace-nowrap text-[15px] font-semibold text-slate-50">AI Architect</h2>
-        <button onClick={() => setModels(true)} data-models-toggle className={`label ml-1 truncate rounded-full border px-2 py-0.5 ${loaded ? 'border-emerald-400/30 !text-emerald-300' : 'border-amber-300/30 !text-amber-200'}`}>
+        <button
+          onClick={() => setModels(true)}
+          data-models-toggle
+          {...tip(loaded ? `Running ${loaded.name}` : 'Scripted mode', loaded ? 'A language model running inside this page chooses tools and explains results. Click to change it.' : 'No model is loaded: requests are matched by keyword and answers are templates. Click to load a model.', 'models')}
+          className={`label ml-1 truncate rounded-full border px-2 py-0.5 ${loaded ? 'border-emerald-400/30 !text-emerald-300' : 'border-amber-300/30 !text-amber-200'}`}
+        >
           {loaded ? loaded.name : 'scripted · no model'}
         </button>
         <div className="flex-1" />
-        {messages.length > 0 && (
-          <button onClick={clearChat} disabled={busy} aria-label="Clear the conversation" title="Clear the conversation" className="grid h-9 w-9 place-items-center rounded-lg text-slate-400 hover:bg-white/5 hover:text-white disabled:opacity-30">
+        {messages.length > 0 && tab === 'chat' && (
+          <button onClick={clearChat} disabled={busy} aria-label="Clear the conversation" {...tip('Clear the conversation', 'Removes the messages. What is in the scene stays; the session counts in Profile stay.')} className="grid h-9 w-9 place-items-center rounded-lg text-slate-400 hover:bg-white/5 hover:text-white disabled:opacity-30">
             <Trash2 className="h-4 w-4" />
           </button>
         )}
-        <button onClick={() => setDrawer(false)} aria-label="Close the AI drawer" className="grid h-9 w-9 place-items-center rounded-lg text-slate-400 hover:bg-white/5 hover:text-white">
+        <button onClick={() => setDrawer(false)} aria-label="Close the AI drawer" {...tip('Hide the AI Architect', 'The scene takes the space.', 'drawer')} className="grid h-9 w-9 place-items-center rounded-lg text-slate-400 hover:bg-white/5 hover:text-white">
           <X className="h-4 w-4" />
         </button>
       </header>
 
-      <div ref={scroller} className="thin-scroll min-h-0 flex-1 space-y-4 overflow-y-auto px-3.5 py-3.5" aria-live="polite">
-        {messages.length === 0 ? <Empty scripted={!loaded}>{chipRow(true)}</Empty> : messages.map((m, i) => <MessageView key={m.id} m={m} last={i === messages.length - 1} busy={busy} />)}
+      <div role="tablist" aria-label="AI Architect views" className="flex shrink-0 gap-1 border-b border-white/8 px-3 pb-2">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={tab === t.id}
+            onClick={() => showDrawer(t.id)}
+            {...tip(t.label, t.desc, t.keys)}
+            className={`flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg text-[12.5px] font-medium transition-colors ${tab === t.id ? 'bg-cyan-400/12 text-cyan-200' : 'text-slate-400 hover:bg-white/5 hover:text-slate-100'}`}
+          >
+            {t.icon}
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      <footer className="shrink-0 space-y-2 border-t border-white/8 px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-2.5">
-        {messages.length > 0 && chipRow(false)}
-        <div className="flex items-end gap-2 rounded-2xl border border-white/10 bg-black/25 p-1.5 pl-3 focus-within:border-cyan-400/50">
-          <textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-                e.preventDefault();
-                submit();
-              }
-            }}
-            rows={1}
-            placeholder={loaded ? 'Ask for a query, or paste one to trace' : 'Try “audit the schema”, or ask for a query'}
-            aria-label="Message the AI architect"
-            className="max-h-32 min-h-9 flex-1 resize-none bg-transparent py-1.5 text-[14px] leading-snug text-slate-100 !outline-none placeholder:text-slate-500 [field-sizing:content]"
-          />
-          {busy ? (
-            <button onClick={stop} aria-label="Stop" className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/10 text-slate-100 hover:bg-white/15">
-              <Square className="h-3.5 w-3.5 fill-current" />
-            </button>
-          ) : (
-            <button onClick={submit} disabled={!draft.trim()} aria-label="Send" className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-cyan-400 text-slate-950 hover:bg-cyan-300 disabled:opacity-30">
-              <ArrowUp className="h-4 w-4" />
-            </button>
-          )}
-        </div>
-      </footer>
+      {tab === 'profile' ? (
+        <ProfileTab />
+      ) : tab === 'tools' ? (
+        <ToolsTab />
+      ) : (
+        <>
+          <div ref={scroller} className="thin-scroll min-h-0 flex-1 space-y-4 overflow-y-auto px-3.5 py-3.5" aria-live="polite">
+            {messages.length === 0 ? <Empty scripted={!loaded}>{chipRow(true)}</Empty> : messages.map((m, i) => <MessageView key={m.id} m={m} last={i === messages.length - 1} busy={busy} />)}
+          </div>
+
+          <footer className="shrink-0 space-y-2 border-t border-white/8 px-3 pb-[max(10px,env(safe-area-inset-bottom))] pt-2.5">
+            {messages.length > 0 && chipRow(false)}
+            <div className="flex items-end gap-2 rounded-2xl border border-white/10 bg-black/25 p-1.5 pl-3 transition-colors focus-within:bg-black/45">
+              <textarea
+                ref={composer}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                    e.preventDefault();
+                    submit();
+                  } else if (e.key === 'Escape') {
+                    // first Esc stops a running answer; otherwise it hands the keyboard back to the scene's shortcuts
+                    if (busy) stop();
+                    else e.currentTarget.blur();
+                  }
+                }}
+                rows={1}
+                placeholder={loaded ? 'Ask for a query, or paste one to trace' : 'Try “audit the schema”, or ask for a query'}
+                aria-label="Message the AI architect"
+                className="max-h-32 min-h-9 flex-1 resize-none bg-transparent py-1.5 text-[14px] leading-snug text-slate-100 !outline-none placeholder:text-slate-500 [field-sizing:content]"
+              />
+              {!draft && !busy && hotkeys && !phone && <Keys keys="/" className="mb-2 opacity-60" />}
+              {busy ? (
+                <button onClick={stop} aria-label="Stop" {...tip('Stop', 'Stops the Architect where it is. What a tool already put in the scene stays.', 'Escape')} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/10 text-slate-100 hover:bg-white/15">
+                  <Square className="h-3.5 w-3.5 fill-current" />
+                </button>
+              ) : (
+                <button onClick={submit} disabled={!draft.trim()} aria-label="Send" {...tip('Send', 'Shift+Enter starts a new line.', 'Enter')} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-cyan-400 text-slate-950 hover:bg-cyan-300 disabled:opacity-30">
+                  <ArrowUp className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+            <StatusLine />
+          </footer>
+        </>
+      )}
     </section>
   );
 }

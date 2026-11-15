@@ -1,13 +1,15 @@
 // The bar across the top: which database is shown, the local engine's
-// status, the model selector, and the AI drawer's toggle.
+// status, the model selector, the AI drawer's toggle, and Settings (on a
+// phone, where the bar is full, Settings opens from the drawer's Profile tab).
 
-import { ChevronDown, Cpu, Database, Download, LoaderCircle, Sparkles, Trash2, TriangleAlert, X } from 'lucide-react';
+import { ChevronDown, Cpu, Database, Download, LoaderCircle, Settings2, Sparkles, Trash2, TriangleAlert, X } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { DEVICE_MODELS, evictModel, isMobileDevice, loadModel, MODELS, plannedLoad, unloadModel, useEngine } from '../llm/engine';
 import { planText } from '../llm/device';
 import { BUILT_IN, useRegistry } from '../schema/registry';
 import { setSchema, useScene } from '../state/scene';
 import { useUi } from '../state/ui';
+import { tip } from './Tooltip';
 
 const mb = (bytes: number) => (bytes >= 1e9 ? `${(bytes / 1e9).toFixed(2)} GB` : `${Math.round(bytes / 1e6)} MB`);
 
@@ -33,10 +35,10 @@ function SchemaSwitcher() {
   const imported = useRegistry((s) => s.imported);
   const setImport = useUi((s) => s.setImport);
   return (
-    <label className="glass relative flex h-10 min-w-0 items-center gap-2 rounded-xl pl-3 pr-2">
+    <label {...tip('Database', `Switch between the sample schemas, or import your own as SQL DDL. Showing: ${engine}.`, 'import')} className="glass relative flex h-10 min-w-0 items-center gap-2 rounded-xl pl-3 pr-2">
       <Database className="h-4 w-4 shrink-0 text-cyan-300" aria-hidden />
       <span className="sr-only">Database</span>
-      <select value={id} onChange={(e) => (e.target.value === IMPORT ? setImport(true) : setSchema(e.target.value))} className="min-w-0 cursor-pointer appearance-none truncate bg-transparent pr-6 text-sm font-semibold text-slate-100 outline-none" title={engine}>
+      <select value={id} onChange={(e) => (e.target.value === IMPORT ? setImport(true) : setSchema(e.target.value))} className="min-w-0 cursor-pointer appearance-none truncate bg-transparent pr-6 text-sm font-semibold text-slate-100 outline-none">
         {BUILT_IN.map((s) => (
           <option key={s.id} value={s.id} className="bg-slate-900">
             {s.name}
@@ -130,7 +132,7 @@ function ModelMenu({ onClose }: { onClose: () => void }) {
                     <button
                       onClick={() => window.confirm(`Delete the downloaded ${m.name} (${m.size}) from this browser?`) && void evictModel(m.id)}
                       aria-label={`Delete ${m.name}`}
-                      title="Delete the download"
+                      {...tip('Delete the download', `Frees ${m.size} of this browser’s storage. You can download it again.`)}
                       className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-white/5 hover:text-rose-300"
                     >
                       <Trash2 className="h-4 w-4" />
@@ -205,7 +207,7 @@ function ModelMenu({ onClose }: { onClose: () => void }) {
 }
 
 export function TopBar() {
-  const { drawerOpen, setDrawer, modelsOpen, setModels } = useUi();
+  const { drawerOpen, setDrawer, modelsOpen, setModels, setSettings } = useUi();
   const summary = useEngineSummary();
   const error = useEngine((s) => s.status === 'error');
 
@@ -223,6 +225,7 @@ export function TopBar() {
         onClick={() => setModels(!modelsOpen)}
         aria-expanded={modelsOpen}
         aria-label={`Local model: ${summary.text}`}
+        {...(modelsOpen ? {} : tip('Local model', 'The AI Architect’s model runs inside this browser. Download, load or unload it here; without one it works in scripted mode.', 'models'))}
         className={`pointer-events-auto glass flex h-10 min-w-0 items-center gap-2 rounded-xl px-3 text-[13px] font-medium text-slate-200 hover:text-white ${error ? '!border-rose-400/40' : ''}`}
       >
         <span className={`h-2 w-2 shrink-0 rounded-full ${summary.dot}`} />
@@ -234,10 +237,14 @@ export function TopBar() {
         onClick={() => setDrawer(!drawerOpen)}
         aria-pressed={drawerOpen}
         aria-label={drawerOpen ? 'Close the AI drawer' : 'Open the AI drawer'}
+        {...tip(drawerOpen ? 'Hide the AI Architect' : 'Open the AI Architect', 'Ask about the schema: it audits, traces queries, writes SQL and previews refactors in the scene.', 'drawer')}
         className={`pointer-events-auto flex h-10 items-center gap-2 rounded-xl px-3 text-[13px] font-semibold transition-colors ${drawerOpen ? 'glass text-cyan-300' : 'bg-cyan-400 text-slate-950 hover:bg-cyan-300'}`}
       >
         <Sparkles className="h-4 w-4" />
         <span className="hidden sm:block">AI Architect</span>
+      </button>
+      <button onClick={() => setSettings(true)} aria-label="Settings" {...tip('Settings', 'Scene, AI Architect and keyboard preferences. Press ? for the shortcuts.', 'settings')} className="pointer-events-auto glass hidden h-10 w-10 shrink-0 place-items-center rounded-xl text-slate-300 hover:text-white sm:grid">
+        <Settings2 className="h-4 w-4" />
       </button>
       {modelsOpen && (
         <div className="pointer-events-auto">
