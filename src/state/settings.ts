@@ -12,6 +12,13 @@ export type Settings = {
   tooltips: boolean;
   /** With a model loaded: the model chooses the tool and writes its arguments. Off: keywords decide. */
   modelPicks: boolean;
+  /**
+   * With a model loaded: each choice is read from one token, which scores every option at once (llm/decide.ts).
+   * Off: the model spells the tool's name out under a grammar, as it did before.
+   */
+  fastDecide: boolean;
+  /** With a model loaded: how many tools one answer may run. After the first, only tools that read and report. 1 keeps a turn to one tool. */
+  maxSteps: number;
   /** With a model loaded: the model explains each result. Off: the tool's own summary is shown, at once. */
   narrate: boolean;
   /** Each answer's steps start unfolded. */
@@ -22,7 +29,7 @@ export type Settings = {
   autoload: boolean;
 };
 
-export const DEFAULT_SETTINGS: Settings = { hotkeys: true, tooltips: true, modelPicks: true, narrate: true, stepsOpen: false, followUps: true, autoload: true };
+export const DEFAULT_SETTINGS: Settings = { hotkeys: true, tooltips: true, modelPicks: true, fastDecide: true, maxSteps: 3, narrate: true, stepsOpen: false, followUps: true, autoload: true };
 
 // Where there is no usable localStorage (a locked-down browser, the test runner), the choices last for the visit.
 const held = new Map<string, string>();

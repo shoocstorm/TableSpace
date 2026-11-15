@@ -41,7 +41,10 @@ function Row({ title, desc, children, muted }: { title: string; desc: ReactNode;
   );
 }
 
-function Toggle({ k, title, desc, muted }: { k: keyof Settings; title: string; desc: ReactNode; muted?: boolean }) {
+/** The settings that are switches. */
+type Flag = { [K in keyof Settings]: Settings[K] extends boolean ? K : never }[keyof Settings];
+
+function Toggle({ k, title, desc, muted }: { k: Flag; title: string; desc: ReactNode; muted?: boolean }) {
   const on = useSettings((s) => s[k]);
   const set = useSettings((s) => s.set);
   return (
@@ -113,6 +116,9 @@ function Agent() {
     then();
   };
   const needsModel = loaded ? '' : ' Applies once a model is loaded.';
+  const modelPicks = useSettings((s) => s.modelPicks);
+  const maxSteps = useSettings((s) => s.maxSteps);
+  const set = useSettings((s) => s.set);
   return (
     <>
       <Group title="Model">
@@ -133,6 +139,21 @@ function Agent() {
           title="The model chooses the tool"
           desc={`On: the model reads your request, picks one of the ${TOOLS.length} tools and writes its arguments. Off: fixed keyword rules pick, which is instant and predictable but understands nothing.${needsModel}`}
         />
+        <Toggle
+          k="fastDecide"
+          muted={!loaded || !modelPicks}
+          title="Read each choice from one token"
+          desc={`On: the model is shown the options as letters and its choice is read from a single token, which also scores every option, so a choice it only leans towards can be set aside. Off: it spells the tool’s name out, which takes a few tokens more and gives no scores.${needsModel}`}
+        />
+        <Row muted={!loaded || !modelPicks} title="Tools per answer" desc={`How far one answer may go. After the first tool, the model may run more that read and report (table details, relationships, indexes, the audit) and then answers from all of them. Each extra step is one more decision. 1 keeps every answer to one tool.${needsModel}`}>
+          <select value={maxSteps} onChange={(e) => set({ maxSteps: Number(e.target.value) })} aria-label="Tools per answer" className="h-9 cursor-pointer rounded-lg border border-white/10 bg-panel-2 px-2 text-[13px] text-slate-100">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <option key={n} value={n}>
+                {n === 1 ? '1 · one tool' : `up to ${n}`}
+              </option>
+            ))}
+          </select>
+        </Row>
         <Toggle k="narrate" muted={!loaded} title="The model explains results" desc={`On: the model writes a few sentences from the tool’s facts. Off: the tool’s own summary is shown at once, with no wait and nothing a model could misstate.${needsModel}`} />
       </Group>
       <Group title="What it shows">

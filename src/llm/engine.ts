@@ -343,7 +343,45 @@ export async function complete(messages: ChatMessage[], opts: { grammar: string;
   }
 }
 
-export type StreamEvent = { type: 'delta'; text: string } | { type: 'done'; tokens: number; tokPerSec: number | null };
+/** One candidate for a generated token, as llama.cpp reports it. */
+export type TokenScore = { token: string; logprob: number; bytes?: number[] | null };
+
+/**
+ * One forward pass, read out instead of written: the first token's top
+ * candidates with their log-probabilities (llm/decide.ts turns them into a
+ * choice). The parameters are the ones Andai measured on wllama 3.6.1:
+ * neutral sampling, so the logprobs are a plain readout of the logits; 20
+ * candidates, so every option letter is listed even when other tokens rank
+ * among them; no `post_sampling_probs`, which would drop the list.
+ */
+export async function firstToken(messages: ChatMessage[], opts: { grammar: string; signal?: AbortSignal }): Promise<{ sampled: string | null; top: TokenScore[] }> {
+  const w = wllama;
+  const def = loadedModel();
+  if (!w || !def) throw new Error('No model loaded.');
+  useEngine.setState({ generating: true });
+  try {
+    const response = (await w.createChatCompletion({
+      messages: fitMessages(messages, contextSize(def), 1),
+      stream: false,
+      grammar: opts.grammar,
+      max_tokens: 1,
+      temperature: 1,
+      top_k: 0,
+      top_p: 1,
+      logprobs: true,
+      top_logprobs: 20,
+      abortSignal: opts.signal,
+      // thinking must not spend the one token
+      ...(def.thinking ? { chat_template_kwargs: { enable_thinking: false } } : {}),
+    } as CompletionParams & { stream: false })) as ChatCompletionResponse & { choices?: { logprobs?: { content?: { token: string; top_logprobs?: TokenScore[] }[] } | null }[] };
+    const first = response.choices?.[0]?.logprobs?.content?.[0];
+    return { sampled: first?.token ?? response.choices?.[0]?.message?.content ?? null, top: (first?.top_logprobs ?? []).map(({ token, logprob, bytes }) => ({ token, logprob, bytes })) };
+  } finally {
+    useEngine.setState({ generating: false });
+  }
+}
+
+export type StreamEvent ={ type: 'delta'; text: string } | { type: 'done'; tokens: number; tokPerSec: number | null };
 
 /** Streams a chat completion. Throws `WllamaAbortError` when `signal` aborts. */
 export async function* chat(messages: ChatMessage[], opts: { temperature: number; maxTokens: number; signal: AbortSignal }): AsyncGenerator<StreamEvent> {

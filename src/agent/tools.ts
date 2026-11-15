@@ -11,12 +11,13 @@ import { executeSpec, type ResultSet } from '../analysis/execute';
 import { SEED_SIZES, type SeedSize } from '../analysis/seed';
 import { extractSql, parseQuery } from '../analysis/sql';
 import { formatRows, neighbours, tablesOfDomain } from '../schema/graph';
+import { cardsText, COLUMN_KINDS, columnNames, describeTables, findColumns, indexReport, joinPath, mentionedColumnNames, mentionedKind, pathTables, relateTables, schemaOverview, unindexedFks, type Card, type ColumnKind } from '../schema/insight';
 import type { SchemaDef } from '../schema/types';
 import { ghostPositions } from '../scene/Ghosts';
 import { addWhatIf, clearBadges, clearGhosts, clearWhatIf, focusTables, mockData, positionsOf, resetView, seedTables, showFindings, showGhosts, startTrace, useScene, type WhatIf } from '../state/scene';
 import type { ObjectSchema } from './grammar';
 
-export type ToolName = 'focus_tables' | 'write_sql' | 'what_if_index' | 'trace_query' | 'propose_refactor' | 'audit_schema' | 'seed_data' | 'reset_view';
+export type ToolName = 'focus_tables' | 'describe_tables' | 'relate_tables' | 'inspect_indexes' | 'schema_overview' | 'find_columns' | 'write_sql' | 'what_if_index' | 'trace_query' | 'propose_refactor' | 'audit_schema' | 'seed_data' | 'reset_view';
 export type ToolCall = { tool: ToolName; args: Record<string, unknown>; /** A prompt chip whose own text is the request (the tool reads it). */ useText?: boolean };
 
 /** Structured results the chat drawer renders under the answer. */
@@ -29,7 +30,8 @@ export type Block =
   | { kind: 'result'; result: ResultSet; sql?: string }
   | { kind: 'whatif'; added: WhatIf[]; before: PlanStep[] | null; after: PlanStep[] | null; resolved: number; sql: string }
   | { kind: 'seed'; order: string[]; counts: Record<string, number>; total: number }
-  | { kind: 'tables'; label: string; tables: string[] };
+  | { kind: 'tables'; label: string; tables: string[] }
+  | { kind: 'info'; title: string; cards: Card[] };
 
 export type ToolResult = {
   ok: boolean;
@@ -68,12 +70,20 @@ export type Tool = {
   /** Shown on the chip while the tool runs. */
   label: string;
   schema: (schema: SchemaDef) => ObjectSchema;
+  /**
+   * The tools worth running after this one in the same turn, for the model to choose from (agent/run.ts).
+   * Only tools that read and report are listed: anything that adds to the scene stays the user's click.
+   * None listed: the turn ends with this tool, and no decision is spent asking.
+   */
+  then?: ToolName[];
   run: (args: Record<string, unknown>, ctx: ToolContext) => Promise<ToolResult> | ToolResult;
 };
 
 export type ToolContext = {
   schema: SchemaDef;
   userText: string;
+  /** A later step of a turn: report, but leave the camera and the highlight where the first step put them. */
+  quiet?: boolean;
   /**
    * Asks the loaded model for one more JSON object held to `spec` (a second, narrower question a tool
    * can only pose once it knows which tables are involved). Absent in scripted mode; null when the model's answer didn't validate.
@@ -112,6 +122,13 @@ export function mentionedDomain(schema: SchemaDef, text: string): string | null 
   return schema.domains.find((d) => new RegExp(`\\b${d.id}s?\\b|\\b${d.label.toLowerCase()}\\b`).test(lower))?.id ?? null;
 }
 
+/** The tables a lookup is about: the ones the request names, then the ones the model added, in schema order. */
+function pickTables(schema: SchemaDef, userText: string, fromModel: unknown, max: number): string[] {
+  const said = mentionedTables(schema, userText);
+  const more = (Array.isArray(fromModel) ? (fromModel as string[]) : []).filter((t) => names(schema).includes(t) && !said.includes(t));
+  return [...said, ...more].slice(0, max);
+}
+
 const list = (items: string[], max = 6) => (items.length > max ? `${items.slice(0, max).join(', ')} and ${items.length - max} more` : items.join(', '));
 
 export const TOOLS: Tool[] = [
@@ -119,9 +136,9 @@ export const TOOLS: Tool[] = [
     name: 'focus_tables',
     effect: 'view',
     leaves: "Lights the tables it found, dims the rest and flies the camera there. Take it away with the Focus pill above the dock, or Reset.",
-    examples: ["show {t}", "how do {t} and {p} relate?", "show the {d} domain"],
+    examples: ["show {t}", "where is {p}?", "show the {d} domain"],
     label: 'Flying to tables',
-    description: 'Show, find, locate or explain tables or a whole domain: flies the camera there, highlights them and dims the rest.',
+    description: 'Show, find or locate tables or a whole domain in the 3D view: flies the camera there, highlights them and dims the rest.',
     schema: (s) => ({
       type: 'object',
       properties: {
@@ -151,6 +168,139 @@ export const TOOLS: Tool[] = [
         text: `Here ${tables.length === 1 ? 'is' : 'are'} **${label}**${tables.length > 1 ? ` — ${tables.length} tables` : ''}. Everything else is dimmed; ${edges.length} relationship${edges.length === 1 ? '' : 's'} connect${edges.length === 1 ? 's' : ''} them.`,
         blocks: [{ kind: 'tables', label, tables }],
       };
+    },
+  },
+  {
+    name: 'describe_tables',
+    effect: 'analyze',
+    leaves: "Reports each table's columns, keys, relationships and indexes, and lights those tables. Changes nothing else. Take the highlight away with the Focus pill, or Reset.",
+    examples: ["describe {t}", "what columns do {t} and {p} have?", "what is the primary key of {p}?"],
+    label: 'Reading the tables',
+    description: 'Describe tables in full, several at once: columns with types, primary key, nullable and unique columns, foreign keys in and out, indexes.',
+    schema: (s) => ({ type: 'object', properties: { tables: { type: 'array', items: { type: 'string', enum: names(s) }, maxItems: 6, description: 'the tables to describe, all in one call' } }, required: ['tables'] }),
+    then: ['relate_tables', 'inspect_indexes', 'audit_schema'],
+    run: (args, { schema, userText, quiet }) => {
+      const tables = pickTables(schema, userText, args.tables, 6);
+      if (!tables.length) return { ok: false, facts: 'No table was named, so nothing was described.', text: 'Tell me which tables to describe, for example *describe orders and payments*.', blocks: [] };
+      // several tables share what the model can read: wide ones list fewer columns each
+      const cards = describeTables(schema, tables, tables.length > 3 ? 14 : tables.length > 1 ? 24 : 40);
+      if (!quiet) focusTables(tables, tables.join(', '));
+      const t0 = schema.tables.find((t) => t.name === tables[0])!;
+      return {
+        ok: true,
+        facts: `Table details (read from the schema):\n${cardsText(cards)}`,
+        text: tables.length === 1 ? `**${t0.name}** has ${t0.columns.length} columns, ${t0.fks.length} foreign key${t0.fks.length === 1 ? '' : 's'} and ${t0.indexes.length} index${t0.indexes.length === 1 ? '' : 'es'} besides its primary key. The details are below.` : `Here are **${tables.length} tables** in full: ${list(tables)}. Columns, keys, relationships and indexes are below.`,
+        blocks: [{ kind: 'info', title: 'Table details', cards: describeTables(schema, tables) }],
+        next: tables.some((t) => unindexedFks(schema.tables.find((x) => x.name === t)!).length) ? [{ label: `Inspect the indexes of ${list(tables, 2)}`, call: { tool: 'inspect_indexes', args: { tables } } }] : [],
+      };
+    },
+  },
+  {
+    name: 'relate_tables',
+    effect: 'analyze',
+    leaves: "Reports how tables join (the exact columns, through other tables if need be) and what depends on them, and lights the tables on the path. Changes nothing else. Take the highlight away with the Focus pill, or Reset.",
+    examples: ["how do {t} and {p} relate?", "how do I join {t} to {p}?", "what depends on {p}?"],
+    label: 'Following the relationships',
+    description: 'Relate tables: the join path between two or more tables with the exact join columns, each table’s parents and children, and what depends on it.',
+    schema: (s) => ({
+      type: 'object',
+      properties: {
+        tables: { type: 'array', items: { type: 'string', enum: names(s) }, maxItems: 4, description: 'the tables to relate: two or more for a join path, one for its parents and children' },
+        depth: { type: 'string', enum: ['1', '2', '3'], description: 'how many relationships out to follow dependants' },
+      },
+      required: ['tables', 'depth'],
+    }),
+    then: ['describe_tables', 'inspect_indexes'],
+    run: (args, { schema, userText, quiet }) => {
+      const tables = pickTables(schema, userText, args.tables, 4);
+      if (!tables.length) return { ok: false, facts: 'No table was named, so no relationship was followed.', text: 'Tell me which tables to relate, for example *how do I join order_items to users?*', blocks: [] };
+      const cards = relateTables(schema, tables, Number(args.depth ?? 2));
+      // light every table a join path passes through, not only its two ends
+      const onPaths = new Set(tables);
+      for (let i = 0; i < tables.length; i++) for (let j = i + 1; j < tables.length; j++) for (const t of pathTables(tables[i], joinPath(schema, tables[i], tables[j]) ?? [])) onPaths.add(t);
+      const lit = tables.length > 1 ? names(schema).filter((n) => onPaths.has(n)) : neighbours(schema, tables, 1);
+      if (!quiet) focusTables(lit, `Relationships · ${list(tables, 3)}`);
+      const first = tables.length > 1 ? joinPath(schema, tables[0], tables[1]) : null;
+      return {
+        ok: true,
+        facts: `Relationships (read from the foreign keys):\n${cardsText(cards)}`,
+        text:
+          tables.length > 1
+            ? first
+              ? `**${tables[0]}** reaches **${tables[1]}** in ${first.length} join${first.length === 1 ? '' : 's'}${first.length > 1 ? `, through ${pathTables(tables[0], first).slice(1, -1).join(', ')}` : ''}. The join columns are below.`
+              : `No foreign keys connect **${tables[0]}** and **${tables[1]}**, directly or through other tables.`
+            : `Here is what **${tables[0]}** references and what references it.`,
+        blocks: [{ kind: 'info', title: 'Relationships', cards }],
+      };
+    },
+  },
+  {
+    name: 'inspect_indexes',
+    effect: 'analyze',
+    leaves: "Reports the indexes of the tables named (or of the whole schema): what each covers, foreign keys with none, and redundant ones. Lights the tables it reports on. Changes nothing else.",
+    examples: ["which indexes does {t} have?", "list the indexes on {t} and {p}", "are any indexes redundant?"],
+    label: 'Reading the indexes',
+    description: 'Inspect or list the indexes that exist on several tables at once (or all tables): the columns each covers, foreign keys with and without an index, redundant indexes.',
+    schema: (s) => ({ type: 'object', properties: { tables: { type: 'array', items: { type: 'string', enum: names(s) }, maxItems: 8, description: 'the tables to inspect; leave empty for the whole schema' } }, required: ['tables'] }),
+    then: ['describe_tables', 'audit_schema'],
+    run: (args, { schema, userText, quiet }) => {
+      const tables = pickTables(schema, userText, args.tables, 8);
+      const cards = indexReport(schema, tables);
+      const reported = cards.flatMap((c) => c.table ?? []);
+      if (!quiet && reported.length) focusTables(reported, `Indexes · ${tables.length ? list(tables, 3) : 'tables to fix'}`);
+      const bare = (tables.length ? tables : names(schema)).flatMap((t) => unindexedFks(schema.tables.find((x) => x.name === t)!).map((c) => `${t}.${c}`));
+      return {
+        ok: true,
+        facts: `Index report for ${tables.length ? list(tables) : 'the whole schema (only tables with something to fix are listed)'}:\n${cardsText(cards)}`,
+        text: `${tables.length ? `Indexes of **${list(tables)}**` : 'Indexes across **the whole schema**'}: ${cards[0].head}.`,
+        blocks: [{ kind: 'info', title: 'Indexes', cards }],
+        next: bare.length ? [{ label: bare.length === 1 ? `What if ${bare[0]} were indexed?` : `What if these ${Math.min(bare.length, 4)} foreign keys were indexed?`, call: { tool: 'what_if_index', args: { columns: bare.slice(0, 4) } } }] : [],
+      };
+    },
+  },
+  {
+    name: 'schema_overview',
+    effect: 'analyze',
+    leaves: "Reports the size and shape of the schema or of one domain: counts, the largest, widest and most connected tables, junction and unrelated tables. Changes nothing in the scene unless a domain is named, which it lights.",
+    examples: ["give me an overview of the schema", "which tables are the biggest?", "summarize the {d} domain"],
+    label: 'Sizing up the schema',
+    description: 'Overview, summary or statistics of the whole schema or one domain: how many tables, columns, keys, indexes and rows; the largest, widest and most connected tables.',
+    schema: (s) => ({ type: 'object', properties: { domain: { type: 'string', enum: ['all', ...s.domains.map((d) => d.id)], description: 'one domain, or all' } }, required: ['domain'] }),
+    then: ['audit_schema', 'inspect_indexes', 'describe_tables'],
+    run: (args, { schema, userText, quiet }) => {
+      const domain = mentionedDomain(schema, userText) ?? (args.domain && args.domain !== 'all' ? (args.domain as string) : null);
+      const cards = schemaOverview(schema, domain);
+      if (domain && !quiet) focusTables(tablesOfDomain(schema, domain), schema.domains.find((d) => d.id === domain)!.label);
+      return { ok: true, facts: `Overview (counted from the schema; row counts are its statistics):\n${cardsText(cards)}`, text: `${cards[0].head}.`, blocks: [{ kind: 'info', title: 'Overview', cards }] };
+    },
+  },
+  {
+    name: 'find_columns',
+    effect: 'analyze',
+    leaves: "Reports every table holding a column of the given name or kind, and lights those tables. Changes nothing else. Take the highlight away with the Focus pill, or Reset.",
+    examples: ["which tables have a {fk} column?", "find every timestamp column", "where are the nullable foreign keys?"],
+    label: 'Searching the columns',
+    description: 'Find columns across all tables by name or by kind (time, number, text, json, boolean, uuid, nullable, unique, foreign key): which tables hold them.',
+    schema: (s) => ({
+      type: 'object',
+      properties: {
+        columns: { type: 'array', items: { type: 'string', enum: columnNames(s).length ? columnNames(s) : ['none'] }, maxItems: 3, description: 'column names to look for; leave empty to search by kind only' },
+        kind: { type: 'string', enum: [...COLUMN_KINDS], description: 'a kind of column, or any' },
+      },
+      required: ['columns', 'kind'],
+    }),
+    then: ['describe_tables', 'relate_tables'],
+    run: (args, { schema, userText, quiet }) => {
+      // names and kinds written in the request are certain; then the model's
+      const said = mentionedColumnNames(schema, userText);
+      const wanted = said.length ? said.slice(0, 3) : ((args.columns as string[] | undefined) ?? []).filter((c) => c !== 'none');
+      const saidKind = mentionedKind(userText);
+      const kind = saidKind !== 'any' ? saidKind : ((args.kind as ColumnKind | undefined) ?? 'any');
+      if (!wanted.length && kind === 'any') return { ok: false, facts: 'No column name or kind was given, so nothing was searched.', text: 'Tell me a column name or a kind, for example *which tables have an email column?* or *find every timestamp column*.', blocks: [] };
+      const found = findColumns(schema, wanted, kind);
+      if (!found.count) return { ok: false, facts: `${found.cards[0].head}.`, text: `No column matches: ${found.cards[0].head.split('match: ')[1]}.`, blocks: [] };
+      if (!quiet) focusTables(found.tables, `Columns · ${[kind !== 'any' ? kind.replace('_', ' ') : '', ...wanted].filter(Boolean).join(', ')}`);
+      return { ok: true, facts: `Column search:\n${cardsText(found.cards)}`, text: `${found.cards[0].head}. The tables holding them are lit.`, blocks: [{ kind: 'info', title: 'Columns found', cards: found.cards }] };
     },
   },
   {
@@ -264,6 +414,7 @@ export const TOOLS: Tool[] = [
     label: 'Tracing the query',
     description: 'Simulate, trace, explain or run a SQL query or a named flow (like checkout): animates its join order across the tables and marks slow scans red.',
     schema: (s) => ({ type: 'object', properties: { preset: { type: 'string', enum: s.presets.length ? s.presets.map((p) => p.id) : ['none'], description: 'the named query closest to the request' } }, required: ['preset'] }),
+    then: ['inspect_indexes', 'describe_tables'],
     run: (args, { schema, userText }) => {
       const typed = extractSql(userText);
       const preset = schema.presets.find((p) => p.id === args.preset) ?? schema.presets[0];
@@ -331,6 +482,7 @@ export const TOOLS: Tool[] = [
     label: 'Auditing the schema',
     description: 'Audit, check or review the schema for problems: missing foreign-key indexes, orphaned tables, God tables. Pins warning badges on the tables.',
     schema: () => ({ type: 'object', properties: { rule: { type: 'string', enum: ['all', ...AUDIT_RULES], description: 'one rule, or all' } }, required: ['rule'] }),
+    then: ['inspect_indexes', 'describe_tables'],
     run: (args, { schema }) => {
       const rule = (args.rule as string) ?? 'all';
       const findings = audit(schema, rule === 'all' ? AUDIT_RULES : [rule as AuditRule]);

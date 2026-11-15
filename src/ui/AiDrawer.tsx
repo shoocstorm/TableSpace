@@ -183,6 +183,44 @@ function BlockView({ block }: { block: Block }) {
         </div>
       );
     }
+    case 'info':
+      return (
+        <div className="rounded-xl border border-white/8 bg-white/[0.02] p-2.5">
+          <div className="label mb-1.5">{block.title} · read from the schema</div>
+          <ul className="space-y-2">
+            {block.cards.map((c, i) => (
+              <li key={i} className="text-[12.5px] leading-snug">
+                {c.table ? (
+                  <>
+                    <TableChip name={c.table} /> <span className="text-slate-400">{c.head.startsWith(`${c.table}: `) ? c.head.slice(c.table.length + 2) : c.head.startsWith(c.table) ? c.head.slice(c.table.length).trim() : c.head}</span>
+                  </>
+                ) : (
+                  <span className="font-medium text-slate-100">{c.head}</span>
+                )}
+                {c.lines.length > 0 && (
+                  <ul className="mt-1 space-y-0.5 border-l border-white/8 pl-2.5">
+                    {c.lines.map((l, j) => {
+                      const at = l.indexOf(': ');
+                      const labelled = at > 0 && at < 48;
+                      return (
+                        <li key={j} className="break-words font-mono text-[11.5px] leading-relaxed text-slate-300">
+                          {labelled ? (
+                            <>
+                              <span className="font-sans text-[11.5px] text-slate-500">{l.slice(0, at)}</span> {l.slice(at + 2)}
+                            </>
+                          ) : (
+                            l
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      );
     case 'tables':
       return (
         <div className="flex flex-wrap gap-1.5">

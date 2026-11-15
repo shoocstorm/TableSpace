@@ -11,6 +11,8 @@ export type Message = {
   text: string;
   /** The tool this answer ran, and who chose it. */
   tool?: { name: ToolName; label: string; by: Chooser; done: boolean; ok: boolean };
+  /** Every tool the answer ran, in order: more than one when the agent looked further. `tool` is the latest. */
+  trail?: ToolName[];
   blocks: Block[];
   /** What the agent did to get here, in order (agent/run.ts). */
   steps: Step[];
@@ -57,7 +59,7 @@ export async function send(text: string, direct?: ToolCall): Promise<void> {
   try {
     await runTurn({ text: trimmed, direct, history, signal: controller.signal }, (u) => {
       if (u.type === 'tool') {
-        patch(id, { tool: { name: u.tool, label: u.label, by: u.by, done: false, ok: true } });
+        patch(id, (m) => ({ tool: { name: u.tool, label: u.label, by: u.by, done: false, ok: true }, trail: [...(m.trail ?? []), u.tool] }));
         useChat.setState((s) => ({ session: { ...s.session, calls: { ...s.session.calls, [u.tool]: (s.session.calls[u.tool] ?? 0) + 1 }, [CHOSEN[u.by]]: s.session[CHOSEN[u.by]] + 1 } }));
       } else if (u.type === 'step') patch(id, (m) => ({ steps: Object.assign([...m.steps], { [u.index]: u.step }) }));
       else if (u.type === 'result') patch(id, (m) => ({ blocks: u.blocks, next: u.next, tool: m.tool && { ...m.tool, done: true, ok: u.ok } }));

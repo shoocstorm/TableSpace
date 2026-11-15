@@ -72,7 +72,7 @@ export function StepsView({ m }: { m: Message }) {
   const worst = steps.some((s) => s.status === 'fail') ? 'fail' : steps.some((s) => s.status === 'warn') ? 'warn' : 'ok';
   // the step that decided what this answer is: the choice of tool, or of answering in words
   const route = steps.find((s) => s.kind === 'route') ?? steps[0];
-  const headline = working ? `${running?.title ?? 'Working'}…` : (m.tool?.name ?? route.title);
+  const headline = working ? `${running?.title ?? 'Working'}…` : (m.trail?.join(' → ') ?? m.tool?.name ?? route.title);
 
   return (
     <div className="rounded-xl border border-white/8 bg-white/[0.02]">

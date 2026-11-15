@@ -12,7 +12,8 @@
 import { Check, ChevronRight, Copy, Eye, FlaskConical, Play, ScanSearch, Settings2, ShieldCheck, Sparkles, X } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
 import { chipsFor } from '../agent/chips';
-import { ANSWER, answerMessages, fillArgsMessages, narrateMessages, pickToolMessages, schemaDigest } from '../agent/prompt';
+import { ANSWER, answerMessages, decisionState, fillArgsMessages, FIRST_QUESTION, firstOptions, narrateMessages, NEXT_QUESTION, nextOptions, schemaDigest } from '../agent/prompt';
+import { decisionMessages } from '../llm/decide';
 import { TOOLS, type Tool, type ToolCall, type ToolEffect } from '../agent/tools';
 import { MODELS, useEngine } from '../llm/engine';
 import { edgesOf } from '../schema/graph';
@@ -155,8 +156,10 @@ function SessionLog() {
 
 const PROTOCOLS = [
   'There is no connection to any database. Everything it shows is worked out from a schema held in this browser, so it cannot change, read or damage your data.',
-  'The model only chooses: which tool, and with what arguments. The work itself (the audit, the plan, the SQL, the refactor) is done by code, the same way every time.',
-  'Its choice is held to a grammar: it can only write a tool name from the list. Arguments are held to a grammar built from this database, so a table that doesn’t exist cannot be written, and they are validated again afterwards.',
+  'The model only chooses: which tool, and with what arguments. The work itself (the lookups, the audit, the plan, the SQL, the refactor) is done by code, the same way every time.',
+  'Its choice is held to a grammar: one letter out of the options offered (or, with that switched off, a tool name from the list). Arguments are held to a grammar built from this database, so a table that doesn’t exist cannot be written, and they are validated again afterwards.',
+  'One answer may run several tools, up to the number set in Settings. After the first, it is offered only tools that read and report, and only ones it has not run. Anything that adds to the scene (a what-if index, ghost tables, mock rows) is never chained: it stays your click.',
+  'A further step needs most of the model’s weight behind it. A choice it only leans towards is not taken, and the turn answers from what it has.',
   'Names you type win over the model’s guess. If your request names a table, that table is used.',
   'When the model fails, or says no tool is needed for a request that plainly matches one, fixed keyword rules decide instead, and the answer says so.',
   'SQL is never written free-hand by the model. It describes the query as a checked form; code compiles it, reads it back, plans it and runs it on invented rows.',
@@ -168,7 +171,7 @@ const LIMITS = [
   'It cannot connect to a database, run a query on real data, or apply a migration. You copy the SQL and decide.',
   'Query plans are simulated from row counts and indexes. They are not EXPLAIN output from a real server.',
   'Query results come from invented rows, to show a query’s shape. They are not your data.',
-  'It does not browse the web or call any service. It knows the schema summary below and general SQL knowledge baked into the model.',
+  'It does not browse the web or call any service. It knows the schema summary below, what its lookup tools read from the schema, and general SQL knowledge baked into the model.',
   'It does not remember: the conversation lives in this tab and is gone on reload. Only free-form answers see earlier messages, and only the last four.',
   'The models are small (0.6–1.7 billion parameters). They misread vague requests. Check the “What I understood” card, or use a one-click prompt.',
   'In scripted mode there is no understanding at all: keywords are matched and answers are templates.',
@@ -190,9 +193,10 @@ export function ProfileTab() {
   const calls = Object.values(session.calls).reduce((n, c) => n + (c ?? 0), 0);
   const count = (e: ToolEffect) => TOOLS.filter((t) => t.effect === e).length;
   const prompts = useMemo(() => {
-    const example = TOOLS[0];
+    const example = TOOLS.find((t) => t.then?.length) ?? TOOLS[0];
     return {
-      router: pickToolMessages(schema, TOOLS, '')[0].content,
+      router: decisionMessages(decisionState(schema, ''), FIRST_QUESTION, firstOptions(TOOLS))[1].content,
+      next: decisionMessages(decisionState(schema, '', [{ tool: example.name, args: {}, ok: true, facts: '(what the tool found)' }]), NEXT_QUESTION, nextOptions((example.then ?? []).flatMap((n) => TOOLS.find((t) => t.name === n) ?? [])))[1].content,
       args: fillArgsMessages(schema, example, '')[0].content,
       narrate: narrateMessages(schema, '', example, '')[0].content,
       answer: answerMessages(schema, [], '')[0].content,
@@ -288,14 +292,15 @@ export function ProfileTab() {
         </div>
         <pre className="thin-scroll max-h-52 overflow-auto whitespace-pre-wrap break-words px-2.5 pb-2.5 font-mono text-[11px] leading-relaxed text-slate-300">{digest}</pre>
       </div>
-      <p className="mt-1.5 text-[11.5px] leading-snug text-slate-500">Table names by domain, the foreign keys, junction tables and unrelated tables. It is not given rows, and it sees column names only when a tool asks about specific tables.</p>
+      <p className="mt-1.5 text-[11.5px] leading-snug text-slate-500">Table names by domain, the foreign keys, junction tables and unrelated tables. It is not given rows. Columns, types, keys and indexes reach it only through a lookup tool (describe_tables, relate_tables, inspect_indexes, find_columns).</p>
 
       <SectionHead n="05" title="Its instructions" sub="the exact prompts, in the order of a turn" />
       <div className="space-y-1.5">
-        <Directive code="Δ1" title="Router" role={`Picks one tool name, or “${ANSWER}”. Reply held to a grammar.`} text={prompts.router} />
+        <Directive code="Δ1" title="Router" role={`Picks one tool, or “${ANSWER}”: as one letter, read from a single token.`} text={prompts.router} />
         <Directive code="Δ2" title="Argument writer" role={`Writes the chosen tool’s arguments as JSON. Shown for ${prompts.example}; each tool gets its own.`} text={prompts.args} />
-        <Directive code="Δ3" title="Explainer" role="Turns the tool’s facts into the 2–4 sentences you read." text={prompts.narrate} />
-        <Directive code="Δ4" title="Free-form answer" role="Used when no tool fits: a general question about databases." text={prompts.answer} />
+        <Directive code="Δ3" title="Next step" role="After a tool has run: stop and answer, or run one more that reads and reports. Shown as it would be after the first tool." text={prompts.next} />
+        <Directive code="Δ4" title="Explainer" role="Turns the tool’s facts into the 2–4 sentences you read. After several tools, one answer is written from all their facts." text={prompts.narrate} />
+        <Directive code="Δ5" title="Free-form answer" role="Used when no tool fits: a general question about databases." text={prompts.answer} />
       </div>
       <p className="mt-1.5 text-[11.5px] leading-snug text-slate-500">Your request is appended to each as the user message. Unfold the steps under any answer to see the filled-in prompt and the model’s raw reply.</p>
 
@@ -329,6 +334,12 @@ function demoFor(tool: Tool, schema: SchemaDef): { label: string; call: ToolCall
   if (chip) return chip;
   if (tool.name === 'what_if_index') return { label: 'What if every missing index were added?', call: { tool: 'what_if_index', args: { columns: [] } } };
   if (tool.name === 'reset_view') return { label: 'Reset the view', call: { tool: 'reset_view', args: {} } };
+  const w = exampleWords(schema);
+  if (tool.name === 'describe_tables') return { label: `Describe ${w.t} and ${w.p}`, call: { tool: 'describe_tables', args: { tables: [w.t, w.p] } } };
+  if (tool.name === 'relate_tables') return { label: `How do ${w.t} and ${w.p} relate?`, call: { tool: 'relate_tables', args: { tables: [w.t, w.p], depth: '2' } } };
+  if (tool.name === 'inspect_indexes') return { label: 'Inspect every index', call: { tool: 'inspect_indexes', args: { tables: [] } } };
+  if (tool.name === 'schema_overview') return { label: 'Overview of the schema', call: { tool: 'schema_overview', args: { domain: 'all' } } };
+  if (tool.name === 'find_columns') return { label: `Which tables have a ${w.fk} column?`, call: { tool: 'find_columns', args: { columns: [w.fk], kind: 'any' } } };
   return null;
 }
 

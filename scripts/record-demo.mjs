@@ -78,7 +78,7 @@ const POINTER = () => {
 function hands(page) {
   let at = { x: WIDTH * 0.42, y: HEIGHT * 0.55 };
   const ease = (t) => t * t * (3 - 2 * t);
-  async function glide(x, y, ms = 650) {
+  async function glide(x, y, ms = 450) {
     const from = at;
     const steps = Math.max(2, Math.round(ms / 16));
     for (let i = 1; i <= steps; i++) {
@@ -89,7 +89,7 @@ function hands(page) {
     at = { x, y };
   }
   /** Clicks what `target` finds (a locator); says so and carries on when it isn't there. */
-  async function click(target, { after = 700 } = {}) {
+  async function click(target, { after = 500 } = {}) {
     const box = await target.first().boundingBox({ timeout: 4000 }).catch(() => null);
     if (!box) return void console.warn(`  · skipped a click: ${target} is not on screen`);
     await glide(box.x + box.width / 2, box.y + box.height / 2);
@@ -106,10 +106,10 @@ function hands(page) {
     await glide(x1, y1, ms);
     await page.mouse.up();
   }
-  async function type(text, { delay = 42 } = {}) {
+  async function type(text, { delay = 24 } = {}) {
     for (const ch of text) {
       await page.keyboard.type(ch);
-      await sleep(delay + Math.random() * 30);
+      await sleep(delay + Math.random() * 12);
     }
   }
   return { glide, click, drag, type };
@@ -123,9 +123,9 @@ async function tour(page) {
   const step = (text) => console.log(`  ${text}`);
   /** Asks the AI architect by typing, the way a visitor would. */
   const ask = async (text, hold) => {
-    await click(page.getByLabel('Message the AI architect'), { after: 250 });
+    await click(page.getByLabel('Message the AI architect'), { after: 200 });
     await type(text);
-    await sleep(300);
+    await sleep(250);
     await page.keyboard.press('Enter');
     await sleep(hold);
   };
@@ -134,61 +134,61 @@ async function tour(page) {
   step('the opening: the schema assembles itself');
   await page.waitForSelector('.intro', { timeout: 15000 }).catch(() => {});
   await page.waitForSelector('.intro', { state: 'detached', timeout: 15000 }).catch(() => {});
-  await sleep(1200);
-
-  step('orbiting');
-  await drag(scene.x - 260, scene.y + 120, scene.x + 240, scene.y + 90, 2600);
   await sleep(700);
 
+  step('orbiting');
+  await drag(scene.x - 260, scene.y + 120, scene.x + 240, scene.y + 90, 1800);
+  await sleep(400);
+
   step('search, and a table up close');
-  await click(dock('Search'), { after: 500 });
-  await type('orders', { delay: 80 });
-  await sleep(500);
+  await click(dock('Search'), { after: 350 });
+  await type('orders', { delay: 50 });
+  await sleep(300);
   await page.keyboard.press('Enter');
-  await glide(scene.x + 330, scene.y + 200, 800);
-  await sleep(2800);
+  await glide(scene.x + 330, scene.y + 200, 600);
+  await sleep(1800);
 
   step('following a foreign key');
-  await click(page.getByRole('button', { name: /→\s*users$/ }), { after: 2800 });
+  await click(page.getByRole('button', { name: /→\s*users$/ }), { after: 1800 });
 
   step('X-ray, and labels on the lines');
-  await click(dock('X-ray'), { after: 2200 });
-  await click(dock('Labels'), { after: 2200 });
-  await click(dock('Labels'), { after: 500 });
-  await click(dock('X-ray'), { after: 400 });
+  await click(dock('X-ray'), { after: 1300 });
+  await click(dock('Labels'), { after: 1300 });
+  await click(dock('Labels'), { after: 350 });
+  await click(dock('X-ray'), { after: 300 });
 
   step('the exploded view');
-  await click(dock('Reset'), { after: 1500 });
-  await click(dock('Explode'), { after: 2600 });
-  await click(dock('Collapse'), { after: 1400 });
+  await click(dock('Reset'), { after: 900 });
+  await click(dock('Explode'), { after: 1800 });
+  await click(dock('Collapse'), { after: 900 });
 
   step('the AI architect: a query trace');
-  await ask('Simulate checkout join', 5500);
-  await click(page.getByRole('button', { name: 'Stop the query trace' }), { after: 600 });
+  await ask('Simulate checkout join', 3800);
+  await click(page.getByRole('button', { name: 'Stop the query trace' }), { after: 450 });
 
   step('the AI architect: an audit');
-  await ask('Full anti-pattern radar', 3400);
+  await ask('Full anti-pattern radar', 2400);
 
   step('the AI architect: a refactor, as ghost tables');
-  await ask('Normalize bloated tables', 4000);
-  await click(dock('Ghosts'), { after: 300 });
-  await click(page.getByRole('button', { name: 'Remove the warning badges' }), { after: 300 });
-  await click(page.getByRole('button', { name: 'Clear the focus' }), { after: 300 });
+  await ask('Normalize bloated tables', 3000);
+  await click(dock('Ghosts'), { after: 250 });
+  await click(page.getByRole('button', { name: 'Remove the warning badges' }), { after: 250 });
+  await click(page.getByRole('button', { name: 'Clear the focus' }), { after: 250 });
 
   step('the AI architect: seeding mock data');
-  await click(dock('Reset'), { after: 1200 });
-  await ask('Seed mock data', 6000);
+  await click(dock('Reset'), { after: 900 });
+  await ask('Seed mock data', 4200);
 
   step('other worlds');
-  await click(dock('World'), { after: 700 });
-  for (const world of ['Synthwave', 'Nebula', 'Ocean Abyss']) await click(page.getByRole('button', { name: world }), { after: 1400 });
-  await click(page.getByRole('button', { name: 'Close the environment picker' }), { after: 400 });
+  await click(dock('World'), { after: 450 });
+  for (const world of ['Synthwave', 'Nebula', 'Ocean Abyss']) await click(page.getByRole('button', { name: world }), { after: 1000 });
+  await click(page.getByRole('button', { name: 'Close the environment picker' }), { after: 300 });
 
   step('a last look');
-  await click(dock('Reset'), { after: 800 });
-  await drag(scene.x + 280, scene.y + 150, scene.x - 320, scene.y + 110, 3200);
-  await glide(scene.x, HEIGHT + 40, 600);
-  await sleep(1200);
+  await click(dock('Reset'), { after: 550 });
+  await drag(scene.x + 280, scene.y + 150, scene.x - 320, scene.y + 110, 2400);
+  await glide(scene.x, HEIGHT + 40, 500);
+  await sleep(800);
 }
 
 // ── recording ────────────────────────────────────────────────────────────
@@ -204,7 +204,7 @@ async function record(page, dir) {
     writes.push(writeFile(file, Buffer.from(data, 'base64')));
     cdp.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
   });
-  await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 93, maxWidth: WIDTH, maxHeight: HEIGHT, everyNthFrame: 1 });
+  await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 85, maxWidth: WIDTH, maxHeight: HEIGHT, everyNthFrame: 1 });
   return async () => {
     await cdp.send('Page.stopScreencast').catch(() => {});
     await Promise.all(writes);

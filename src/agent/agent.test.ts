@@ -68,6 +68,19 @@ describe('scripted router', () => {
     expect(r('explain why the orders query is slow')?.tool).toBe('trace_query');
     expect(r('show the orders table')?.tool).toBe('focus_tables');
   });
+  it('sends questions about the schema itself to the lookup tools', () => {
+    expect(r('describe orders and payments')).toEqual({ tool: 'describe_tables', args: { tables: ['orders', 'payments'] } });
+    expect(r('what columns does the users table have?')?.tool).toBe('describe_tables');
+    expect(r('how do order items relate to products?')).toEqual({ tool: 'relate_tables', args: { tables: ['products', 'order_items'], depth: '2' } });
+    expect(r('how do I join payments to users?')?.tool).toBe('relate_tables');
+    expect(r('what depends on users?')?.tool).toBe('relate_tables');
+    expect(r('which indexes does orders have?')).toEqual({ tool: 'inspect_indexes', args: { tables: ['orders'] } });
+    expect(r('are any indexes redundant?')).toEqual({ tool: 'inspect_indexes', args: { tables: [] } });
+    expect(r('give me an overview of the schema')).toEqual({ tool: 'schema_overview', args: { domain: 'all' } });
+    expect(r('which tables are the biggest tables?')?.tool).toBe('schema_overview');
+    expect(r('which tables have an email column?')).toEqual({ tool: 'find_columns', args: { columns: ['email'], kind: 'any' } });
+    expect(r('find every timestamp column')).toEqual({ tool: 'find_columns', args: { columns: [], kind: 'time' } });
+  });
   it('treats SQL as a query to trace and names as a place to go', () => {
     expect(r('select * from orders o join payments p on p.order_id = o.id')?.tool).toBe('trace_query');
     expect(r('where is inventory?')).toEqual({ tool: 'focus_tables', args: { domain: 'none', tables: ['inventory'], hops: '1' } });
